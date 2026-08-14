@@ -31,7 +31,7 @@ export default function Login({ onLogin }: Props) {
       <Card className="w-full max-w-sm">
         <CardBody className="gap-4 p-8">
           <div className="mb-2 text-center">
-            <h1 className="text-xl font-semibold">oa-hours</h1>
+            <h1 className="text-xl font-semibold">OA-Hours</h1>
             <p className="mt-1 text-sm text-default-500">登录 OA 查看工时统计</p>
           </div>
           <form onSubmit={submit} className="flex flex-col gap-4">

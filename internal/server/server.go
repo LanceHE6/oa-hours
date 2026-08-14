@@ -24,6 +24,9 @@ type Server struct {
 	oaBaseURL string
 	store     *auth.Store
 
+	// BuildTime 构建时间（由 main 通过 ldflags 注入）。
+	BuildTime string
+
 	mu       sync.Mutex
 	sessions map[string]*session
 }
@@ -51,6 +54,8 @@ func (s *Server) Handler(staticFS fs.FS) http.Handler {
 	mux.HandleFunc("/api/auth", s.handleAuth)
 	mux.HandleFunc("/api/month", s.handleMonth)
 	mux.HandleFunc("/api/relogin", s.handleRelogin)
+	mux.HandleFunc("/api/buildinfo", s.handleBuildInfo)
+	mux.HandleFunc("/api/calc", s.handleCalc)
 
 	if staticFS != nil {
 		fileServer := http.FileServer(http.FS(staticFS))
@@ -258,6 +263,34 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleBuildInfo 返回作者与构建时间（供页面 footer 展示）。
+func (s *Server) handleBuildInfo(w http.ResponseWriter, r *http.Request) {
+	buildTime := s.BuildTime
+	if buildTime == "" {
+		buildTime = "unknown"
+	}
+	sendJSON(w, http.StatusOK, map[string]string{
+		"author":    "Hycer",
+		"buildTime": buildTime,
+	})
+}
+
+// handleCalc 根据签到/签退时间计算当日有效工时（纯计算，无需登录）。
+func (s *Server) handleCalc(w http.ResponseWriter, r *http.Request) {
+	signIn := r.URL.Query().Get("signIn")
+	signOut := r.URL.Query().Get("signOut")
+	if signIn == "" || signOut == "" {
+		sendError(w, http.StatusBadRequest, "signIn 和 signOut 参数不能为空")
+		return
+	}
+	hours, err := calc.EffectiveHours(signIn, signOut)
+	if err != nil {
+		sendError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	sendJSON(w, http.StatusOK, map[string]any{"hours": hours})
+}
+
 func (s *Server) handleMonth(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.getSession(r)
 	if !ok {
@@ -278,10 +311,11 @@ func (s *Server) handleMonth(w http.ResponseWriter, r *http.Request) {
 	today := time.Now().Format("2006-01-02")
 
 	// 当月已完成天（不含今天）的工时总和与天数，用于“平均工时”选项。
+	// 与月平均工时口径一致：打卡天（有签退）+ 请假天（8h）。
 	var sumHours float64
 	var doneCount int
 	for _, d := range stats.Days {
-		if d.Found && d.SignOut != "" && d.Date != today {
+		if d.Date != today && (d.Leave || d.SignOut != "") {
 			sumHours += d.Hours
 			doneCount++
 		}
@@ -322,6 +356,7 @@ func (s *Server) handleMonth(w http.ResponseWriter, r *http.Request) {
 		Department:    stats.Department,
 		StandardHours: stats.StandardHours,
 		AverageHours:  stats.AverageHours,
+		TotalHours:    sumHours,
 		LateDays:      stats.LateDays,
 		LeaveDays:     stats.LeaveDays,
 		Today:         today,
@@ -335,6 +370,7 @@ type monthResponse struct {
 	Department    string        `json:"department"`
 	StandardHours float64       `json:"standardHours"`
 	AverageHours  float64       `json:"averageHours"`
+	TotalHours    float64       `json:"totalHours"`
 	LateDays      int           `json:"lateDays"`
 	LeaveDays     int           `json:"leaveDays"`
 	Today         string        `json:"today"`

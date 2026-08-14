@@ -148,18 +148,19 @@ func TargetSignOutFor(in string, targetHours float64) (string, error) {
 	return FormatClock(outSec), nil
 }
 
-// AvgTargetSignOut 计算使月平均工时达到 target 的最早签退时间（不早于 18:00）。
+// AvgTargetSignOut 计算使月平均工时达到 target 的最早签退时间。
 //
 //	sumHours 当月已完成天（不含今天）的有效工时总和；
 //	doneDays 当月已完成天数（不含今天）。
 //
-// 今日需工时 need = target*(doneDays+1) - sumHours：
-//   - need <= 0（平均已达标）：最早下班 18:00；
-//   - 否则按 need 反推签退时间，若早于 18:00 则取 18:00（早退下限）。
+// 今日需工时 need = target*(doneDays+1) - sumHours，且不得低于 8h：
+//   - need 不足 8h 时按 8h 计（当日工时不得低于 8h）；
+//   - 结果若早于 18:00 则取 18:00（早退下限）。
 func AvgTargetSignOut(in string, sumHours float64, doneDays int, target float64) (string, error) {
 	need := target*float64(doneDays+1) - sumHours
-	if need <= 0 {
-		return FormatClock(earliestSignOutSec), nil
+	// 当日工时不得低于 8h。
+	if need < EightHours {
+		need = EightHours
 	}
 	out, err := TargetSignOutFor(in, need)
 	if err != nil {

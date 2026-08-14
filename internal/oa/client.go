@@ -191,13 +191,14 @@ func (c *Client) FetchDayDetail(date string) (*Detail, error) {
 			return nil, fmt.Errorf("会话已过期，重登后仍失败")
 		}
 	}
+	// 优先检测请假：只要当天有请假/外出记录，就按请假（8h）算，忽略打卡。
+	// （同事场景：上午请假+下午打卡，或全天有请假记录，统一按 8h。）
+	if name, leaveType, ok := parseLeave(string(body)); ok {
+		return &Detail{Name: name, Leave: true, LeaveType: leaveType}, nil
+	}
 	d, found := parseDetail(string(body))
 	if found {
 		return &d, nil
-	}
-	// 无打卡数据：检查是否有请假/外出记录。
-	if name, leaveType, ok := parseLeave(string(body)); ok {
-		return &Detail{Name: name, Leave: true, LeaveType: leaveType}, nil
 	}
 	return nil, nil
 }

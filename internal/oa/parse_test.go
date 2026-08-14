@@ -135,6 +135,43 @@ func TestParseLeaveNoRecord(t *testing.T) {
 	}
 }
 
+func TestParseLeaveWithAttendance(t *testing.T) {
+	// 同事场景：当天既有打卡又有请假记录，应优先判定为请假天。
+	fixture := `<table>
+<thead><tr><th>部门</th><th>姓名</th><th>日期</th><th>工作时段</th><th>签到时间</th><th>签退时间</th></tr></thead>
+<tbody><tr>
+<td>云平台测试部</td><td>何明礼</td><td>2026-08-15</td><td>08:30-18:00</td><td>08:20:00</td><td>16:30:00</td>
+</tr></tbody>
+</table>
+<table class="ListStyle">
+<thead><tr><th>请求标题</th><th>姓名</th><th>开始时间</th><th>结束时间</th><th>审批状态</th><th>请假/外出天数</th><th>类型</th></tr></thead>
+<tbody><tr>
+<td class="fieldName"><a href="javascript:foo(1);">请假流程-何明礼-2026-08-15</a></td>
+<td class="fieldName">何明礼</td>
+<td class="fieldName">2026-08-15 08:30</td>
+<td class="fieldName">2026-08-15 10:00</td>
+<td class="fieldName">09归档</td>
+<td class="fieldName">1.50</td>
+<td class="fieldName">年休假</td>
+<td class="fieldName"></td>
+</tr></tbody>
+</table>`
+
+	// 有打卡数据。
+	d, found := parseDetail(fixture)
+	if !found || d.SignIn != "08:20:00" || d.SignOut != "16:30:00" {
+		t.Errorf("parseDetail 应解析出打卡，got %+v found=%v", d, found)
+	}
+	// 也有请假记录（应优先按请假算）。
+	name, leaveType, found := parseLeave(fixture)
+	if !found {
+		t.Fatal("应检测到请假记录")
+	}
+	if name != "何明礼" || leaveType != "年休假" {
+		t.Errorf("name/type = %q/%q, want 何明礼/年休假", name, leaveType)
+	}
+}
+
 func TestIsLoginRedirect(t *testing.T) {
 	if !isLoginRedirect([]byte(`<script>try{top.location.href='/login/Login.jsp?gopage=&_rnd_=x';}catch(e){}</script>`)) {
 		t.Error("should detect login redirect")

@@ -19,6 +19,9 @@ import (
 //go:embed web/dist
 var webDist embed.FS
 
+// buildTime 构建时间，通过 -ldflags "-X main.buildTime=..." 注入。
+var buildTime = "unknown"
+
 func main() {
 	var (
 		addr    = flag.String("addr", "0.0.0.0", "监听地址")
@@ -49,9 +52,10 @@ func main() {
 	}
 
 	srv := server.New(*oaURL, store)
+	srv.BuildTime = buildTime
 	addrStr := *addr + ":" + *port
 	log.Printf("oa-hours 已启动，监听 http://%s", addrStr)
-	log.Printf("OA 地址: %s | 数据目录: %s", *oaURL, *dataDir)
+	log.Printf("OA 地址: %s | 数据目录: %s | 构建时间: %s", *oaURL, *dataDir, buildTime)
 
 	if err := http.ListenAndServe(addrStr, srv.Handler(staticFS)); err != nil {
 		log.Fatalf("服务启动失败: %v", err)

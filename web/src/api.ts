@@ -20,10 +20,16 @@ export interface MonthResponse {
   department: string
   standardHours: number
   averageHours: number
+  totalHours: number
   lateDays: number
   leaveDays: number
   today: string
   days: DayStat[]
+}
+
+export interface BuildInfo {
+  author: string
+  buildTime: string
 }
 
 export interface AuthResponse {
