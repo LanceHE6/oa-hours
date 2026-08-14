@@ -8,6 +8,8 @@ export interface DayStat {
   late: boolean
   isToday: boolean
   targetSignOut?: string
+  recommendSignOut?: string
+  avgSignOut?: string
 }
 
 export interface MonthResponse {

@@ -19,12 +19,20 @@ const (
 	// StandardHours 达标工时（小时）。
 	StandardHours = 8.5
 
+	// EightHours 8 小时目标工时选项（小时）。
+	EightHours = 8.0
+
 	// 各种时间阈值（以“自午夜起的秒数”表示）。
-	startFloorSec    = (8*60 + 30) * 60 // 8:30，早到计薪起点
-	lateThresholdSec = 9 * 3600         // 9:00，判定“迟到”从而可能扣晚饭
-	dinnerThreshold  = 18 * 3600        // 18:00，签退超过才扣晚饭
-	lunchBreakSec    = 90 * 60          // 午休 12:00-13:30 = 1.5h
-	dinnerBreakSec   = 30 * 60          // 晚饭 18:00-18:30 = 0.5h
+	startFloorSec      = (8*60 + 30) * 60 // 8:30，早到计薪起点
+	lateThresholdSec   = 9 * 3600         // 9:00，工时计算里“9点后”扣晚饭的边界
+	dinnerThreshold    = 18 * 3600        // 18:00，签退超过才扣晚饭
+	earliestSignOutSec = 18 * 3600        // 18:00，最早可签退时间（早于算早退）
+	lunchBreakSec      = 90 * 60          // 午休 12:00-13:30 = 1.5h
+	dinnerBreakSec     = 30 * 60          // 晚饭 18:00-18:30 = 0.5h
+
+	// lateGraceSec 迟到宽限秒数：9:00:00 起 59 秒内（即 9:00:59 及之前）不算“9点后”，
+	// 仅用于“迟到”标签，不影响工时计算里的晚饭扣除。
+	lateGraceSec = 59
 )
 
 // ParseClock 解析 "HH:MM:SS" 或 "HH:MM" 形式的时间，返回自午夜起的秒数。
@@ -106,15 +114,18 @@ func EffectiveHours(in, out string) (float64, error) {
 	return float64(effective) / 3600.0, nil
 }
 
-// TargetSignOut 计算当天目标签退时间，使有效工时达到 StandardHours。
-//
-//	in 签到时间 "HH:MM[:SS]"
-//
-// 规则：
-//   - in <= 8:30 → 18:30
-//   - 8:30 < in <= 9:00 → in + 10h
-//   - in > 9:00 → in + 10.5h
+// TargetSignOut 计算当天目标签退时间，使有效工时达到 StandardHours（8.5h）。
 func TargetSignOut(in string) (string, error) {
+	return TargetSignOutFor(in, StandardHours)
+}
+
+// TargetSignOutFor 计算当天目标签退时间，使有效工时达到指定 targetHours。
+//
+// 规则（与 EffectiveHours 一致，扣除项只取决于签到时间）：
+//   - in <= 8:30 → 8:30 起步
+//   - 8:30 < in <= 9:00 → in 起步，扣午休 1.5h
+//   - in > 9:00 → in 起步，扣午休 1.5h + 晚饭 0.5h（此时目标签退必然 > 18:00）
+func TargetSignOutFor(in string, targetHours float64) (string, error) {
 	inSec, err := ParseClock(in)
 	if err != nil {
 		return "", fmt.Errorf("签到时间: %w", err)
@@ -125,8 +136,7 @@ func TargetSignOut(in string) (string, error) {
 		start = startFloorSec
 	}
 
-	// 目标有效秒数 = 8.5h。
-	targetEffective := int(StandardHours * 3600)
+	targetEffective := int(targetHours * 3600)
 
 	// 扣晚饭仅当 9 点后签到（此时目标签退必然 > 18:00）。
 	dinner := 0
@@ -138,13 +148,42 @@ func TargetSignOut(in string) (string, error) {
 	return FormatClock(outSec), nil
 }
 
-// IsLate 判断签到时间是否晚于 9:00（视为迟到）。9:00 整不算迟到。
+// AvgTargetSignOut 计算使月平均工时达到 target 的最早签退时间（不早于 18:00）。
+//
+//	sumHours 当月已完成天（不含今天）的有效工时总和；
+//	doneDays 当月已完成天数（不含今天）。
+//
+// 今日需工时 need = target*(doneDays+1) - sumHours：
+//   - need <= 0（平均已达标）：最早下班 18:00；
+//   - 否则按 need 反推签退时间，若早于 18:00 则取 18:00（早退下限）。
+func AvgTargetSignOut(in string, sumHours float64, doneDays int, target float64) (string, error) {
+	need := target*float64(doneDays+1) - sumHours
+	if need <= 0 {
+		return FormatClock(earliestSignOutSec), nil
+	}
+	out, err := TargetSignOutFor(in, need)
+	if err != nil {
+		return "", err
+	}
+	outSec, err := ParseClock(out)
+	if err != nil {
+		return "", err
+	}
+	if outSec < earliestSignOutSec {
+		return FormatClock(earliestSignOutSec), nil
+	}
+	return out, nil
+}
+
+// IsLate 判断是否迟到：签到时间晚于 9:00:59（即 9:01:00 及以后）算迟到。
+//
+// 注意：仅用于“迟到”标签统计。工时计算里“9点后扣晚饭”的边界仍是 9:00:00（见 EffectiveHours）。
 func IsLate(in string) bool {
 	inSec, err := ParseClock(in)
 	if err != nil {
 		return false
 	}
-	return inSec > lateThresholdSec
+	return inSec > lateThresholdSec+lateGraceSec
 }
 
 // DayRecord 表示一天的考勤与工时。

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Button, Card, CardBody, Chip, Spinner } from '@nextui-org/react'
+import { Button, Card, CardBody, Spinner } from '@nextui-org/react'
 import { apiGet, apiPost, type MonthResponse } from '../api'
 import { formatHours, hoursToHm, shortTime } from '../format'
 import SummaryCard from '../components/SummaryCard'
@@ -26,6 +26,7 @@ export default function Dashboard({ onLogout }: Props) {
   const [data, setData] = useState<MonthResponse | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [targetOption, setTargetOption] = useState<'standard' | 'eight' | 'avg'>('standard')
 
   const load = useCallback(async (m: string) => {
     setLoading(true)
@@ -61,6 +62,19 @@ export default function Dashboard({ onLogout }: Props) {
     () => completedDays.filter((d) => d.hours >= (data?.standardHours ?? 8.5)),
     [completedDays, data],
   )
+
+  const targetValue =
+    targetOption === 'standard'
+      ? todayStat?.targetSignOut
+      : targetOption === 'eight'
+        ? todayStat?.recommendSignOut
+        : todayStat?.avgSignOut
+  const targetDesc =
+    targetOption === 'standard'
+      ? `8.5h 达标工时`
+      : targetOption === 'eight'
+        ? '8 小时工时'
+        : '使本月平均达 8.5h'
 
   return (
     <div className="min-h-screen bg-zinc-950">
@@ -125,33 +139,52 @@ export default function Dashboard({ onLogout }: Props) {
                 subtitle="签到晚于 9:00"
                 color={data.lateDays > 0 ? 'danger' : 'success'}
               />
-              <SummaryCard
-                title="今天目标签退"
-                value={todayStat?.targetSignOut ?? '—'}
-                subtitle={
-                  todayStat?.found
-                    ? `已签到 ${shortTime(todayStat.signIn)}`
-                    : '今日暂无打卡'
-                }
-                color={todayStat?.targetSignOut ? 'warning' : 'default'}
-              />
             </div>
 
-            {/* 当天目标提示 */}
-            {todayStat?.targetSignOut && (
-              <Card className="mt-4 border border-warning/40 bg-warning/5">
-                <CardBody>
-                  <p className="text-sm">
-                    今天签到 <span className="font-semibold">{shortTime(todayStat.signIn)}</span>
-                    ，要达到 {data.standardHours}h 达标工时，需在{' '}
-                    <Chip size="sm" color="warning" variant="flat">
-                      {todayStat.targetSignOut}
-                    </Chip>{' '}
-                    之后签退。
+            {/* 推荐下班时间选择器 */}
+            {todayStat?.targetSignOut ? (
+              <Card className="mt-4">
+                <CardBody className="gap-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-default-500">推荐下班时间</p>
+                    <div className="flex gap-1">
+                      <Button
+                        size="sm"
+                        color={targetOption === 'standard' ? 'primary' : 'default'}
+                        variant={targetOption === 'standard' ? 'solid' : 'flat'}
+                        onPress={() => setTargetOption('standard')}
+                      >
+                        8.5h
+                      </Button>
+                      <Button
+                        size="sm"
+                        color={targetOption === 'eight' ? 'primary' : 'default'}
+                        variant={targetOption === 'eight' ? 'solid' : 'flat'}
+                        onPress={() => setTargetOption('eight')}
+                      >
+                        8h
+                      </Button>
+                      <Button
+                        size="sm"
+                        color={targetOption === 'avg' ? 'primary' : 'default'}
+                        variant={targetOption === 'avg' ? 'solid' : 'flat'}
+                        onPress={() => setTargetOption('avg')}
+                      >
+                        平均工时
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex items-baseline gap-3">
+                    <span className="text-3xl font-semibold text-warning">{targetValue ?? '—'}</span>
+                    <span className="text-sm text-default-500">{targetDesc}</span>
+                  </div>
+                  <p className="text-sm text-default-500">
+                    今天签到 <span className="font-medium text-foreground">{shortTime(todayStat.signIn)}</span>
+                    {targetOption === 'avg' && '，不早于 18:00（早退下限）'}
                   </p>
                 </CardBody>
               </Card>
-            )}
+            ) : null}
 
             {/* 每日工时图 */}
             <Card className="mt-4">

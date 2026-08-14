@@ -101,14 +101,71 @@ func TestIsLate(t *testing.T) {
 		{"08:55:44", false},
 		{"08:59:59", false},
 		{"09:00:00", false}, // 9:00 整不算迟到
-		{"09:00:01", true},
-		{"09:00:53", true},
+		{"09:00:01", false}, // 宽限期内，不算迟到
+		{"09:00:53", false}, // 宽限期内，不算迟到
+		{"09:00:59", false}, // 9:00:59 及之前不算“9点后”
+		{"09:01:00", true},  // 9:01:00 起算迟到
 		{"09:30:00", true},
 	}
 	for _, c := range cases {
 		if got := IsLate(c.in); got != c.want {
 			t.Errorf("IsLate(%q) = %v, want %v", c.in, got, c.want)
 		}
+	}
+}
+
+func TestTargetSignOutFor(t *testing.T) {
+	cases := []struct {
+		in          string
+		targetHours float64
+		want        string
+	}{
+		// 周五 8h 推荐：8:30~9:00 签到，+9.5h。
+		{"08:55:44", 8.0, "18:25"},
+		{"08:30:00", 8.0, "18:00"}, // 8:30 起步 + 1.5h 午休 + 8h
+		{"09:30:00", 8.0, "19:30"}, // 9:30 起步 + 1.5h + 0.5h + 8h = +10h
+		// 8.5h 达标（与 TargetSignOut 一致）。
+		{"08:55:44", 8.5, "18:55"},
+	}
+	for _, c := range cases {
+		got, err := TargetSignOutFor(c.in, c.targetHours)
+		if err != nil {
+			t.Fatalf("TargetSignOutFor(%q,%v) error: %v", c.in, c.targetHours, err)
+		}
+		if got != c.want {
+			t.Errorf("TargetSignOutFor(%q,%v) = %q, want %q", c.in, c.targetHours, got, c.want)
+		}
+	}
+}
+
+func TestAvgTargetSignOut(t *testing.T) {
+	cases := []struct {
+		name     string
+		in       string
+		sumHours float64
+		doneDays int
+		target   float64
+		want     string
+	}{
+		// 平均没达标（4天×8h=32h，平均8h），需补足。
+		{"需补足", "08:30:00", 32, 4, 8.5, "20:30"}, // need=10.5h → 8:30+10.5+1.5=20:30
+		// 平均已超标（4天×10h=40h，平均10h），最早 18:00。
+		{"已超标钳到18点", "08:30:00", 40, 4, 8.5, "18:00"}, // need=2.5h → 12:30 早于18点，钳到18:00
+		// need<=0（平均远超），最早 18:00。
+		{"平均远超", "08:30:00", 50, 4, 8.5, "18:00"},
+		// 无已完成天（月初第一天），need=8.5h。
+		{"月初第一天", "08:30:00", 0, 0, 8.5, "18:30"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := AvgTargetSignOut(c.in, c.sumHours, c.doneDays, c.target)
+			if err != nil {
+				t.Fatalf("AvgTargetSignOut error: %v", err)
+			}
+			if got != c.want {
+				t.Errorf("AvgTargetSignOut(%q,%v,%d,%v) = %q, want %q", c.in, c.sumHours, c.doneDays, c.target, got, c.want)
+			}
+		})
 	}
 }
 

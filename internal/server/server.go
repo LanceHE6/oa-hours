@@ -277,6 +277,16 @@ func (s *Server) handleMonth(w http.ResponseWriter, r *http.Request) {
 
 	today := time.Now().Format("2006-01-02")
 
+	// 当月已完成天（不含今天）的工时总和与天数，用于“平均工时”选项。
+	var sumHours float64
+	var doneCount int
+	for _, d := range stats.Days {
+		if d.Found && d.SignOut != "" && d.Date != today {
+			sumHours += d.Hours
+			doneCount++
+		}
+	}
+
 	days := make([]dayResponse, 0, len(stats.Days))
 	for _, d := range stats.Days {
 		dr := dayResponse{
@@ -289,10 +299,16 @@ func (s *Server) handleMonth(w http.ResponseWriter, r *http.Request) {
 			Late:    d.Late,
 			IsToday: d.Date == today,
 		}
-		// 当天：只要已签到，就计算达标目标签退时间（不管是否已打第二次卡）。
+		// 当天：只要已签到，就计算三种目标工时的签退时间（8.5h / 8h / 平均工时）。
 		if dr.IsToday && d.Found && d.SignIn != "" {
 			if target, err := calc.TargetSignOut(d.SignIn); err == nil {
 				dr.TargetSignOut = target
+			}
+			if rec, err := calc.TargetSignOutFor(d.SignIn, calc.EightHours); err == nil {
+				dr.RecommendSignOut = rec
+			}
+			if avg, err := calc.AvgTargetSignOut(d.SignIn, sumHours, doneCount, calc.StandardHours); err == nil {
+				dr.AvgSignOut = avg
 			}
 		}
 		days = append(days, dr)
@@ -322,13 +338,15 @@ type monthResponse struct {
 }
 
 type dayResponse struct {
-	Date          string  `json:"date"`
-	Weekday       string  `json:"weekday"`
-	SignIn        string  `json:"signIn"`
-	SignOut       string  `json:"signOut"`
-	Hours         float64 `json:"hours"`
-	Found         bool    `json:"found"`
-	Late          bool    `json:"late"`
-	IsToday       bool    `json:"isToday"`
-	TargetSignOut string  `json:"targetSignOut,omitempty"`
+	Date             string  `json:"date"`
+	Weekday          string  `json:"weekday"`
+	SignIn           string  `json:"signIn"`
+	SignOut          string  `json:"signOut"`
+	Hours            float64 `json:"hours"`
+	Found            bool    `json:"found"`
+	Late             bool    `json:"late"`
+	IsToday          bool    `json:"isToday"`
+	TargetSignOut    string  `json:"targetSignOut,omitempty"`
+	RecommendSignOut string  `json:"recommendSignOut,omitempty"` // 8h 推荐下班时间
+	AvgSignOut       string  `json:"avgSignOut,omitempty"`       // 平均工时（补足到 8.5h）下班时间
 }
