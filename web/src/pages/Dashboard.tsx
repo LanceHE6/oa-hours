@@ -134,6 +134,12 @@ export default function Dashboard({ onLogout }: Props) {
                 color="primary"
               />
               <SummaryCard
+                title="请假天数"
+                value={String(data.leaveDays)}
+                subtitle="请假/外出按 8h 计"
+                color={data.leaveDays > 0 ? 'primary' : 'default'}
+              />
+              <SummaryCard
                 title="迟到天数"
                 value={String(data.lateDays)}
                 subtitle="签到晚于 9:00"

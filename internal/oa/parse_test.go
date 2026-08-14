@@ -91,6 +91,50 @@ func TestParseDetailLeaveDay(t *testing.T) {
 	}
 }
 
+func TestParseLeave(t *testing.T) {
+	// 请假天的页面：考勤明细表 tbody 为空，但存在「考勤流程/请假记录」表。
+	fixture := `<table>
+<thead><tr><th>部门</th><th>姓名</th><th>日期</th><th>工作时段</th><th>签到时间</th><th>签退时间</th></tr></thead>
+<tbody>
+</tbody>
+</table>
+<table class="ListStyle">
+<colgroup></colgroup>
+<thead><tr><th>请求标题</th><th>姓名</th><th>开始时间</th><th>结束时间</th><th>审批状态</th><th>请假/外出天数</th><th>类型</th></tr></thead>
+<tbody>
+<tr>
+<td class="fieldName"><a href="javascript:foo(1);">请假流程-何明礼-2026-07-09</a></td>
+<td class="fieldName">何明礼</td>
+<td class="fieldName">2026-07-09 08:30</td>
+<td class="fieldName">2026-07-09 18:00</td>
+<td class="fieldName">09归档</td>
+<td class="fieldName">1.00</td>
+<td class="fieldName">年休假</td>
+<td class="fieldName"></td>
+</tr>
+</tbody>
+</table>`
+
+	name, leaveType, found := parseLeave(fixture)
+	if !found {
+		t.Fatal("应检测到请假记录")
+	}
+	if name != "何明礼" {
+		t.Errorf("姓名 = %q, want 何明礼", name)
+	}
+	if leaveType != "年休假" {
+		t.Errorf("类型 = %q, want 年休假", leaveType)
+	}
+}
+
+func TestParseLeaveNoRecord(t *testing.T) {
+	// 正常打卡天页面不含「请假/外出天数」表头。
+	_, _, found := parseLeave(`<th>签到时间</th><th>签退时间</th><td>09:01:18</td><td>19:02:54</td>`)
+	if found {
+		t.Error("无请假记录不应判定为有")
+	}
+}
+
 func TestIsLoginRedirect(t *testing.T) {
 	if !isLoginRedirect([]byte(`<script>try{top.location.href='/login/Login.jsp?gopage=&_rnd_=x';}catch(e){}</script>`)) {
 		t.Error("should detect login redirect")

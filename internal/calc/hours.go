@@ -192,14 +192,16 @@ type DayRecord struct {
 	SignIn  string  // 签到时间 HH:MM:SS
 	SignOut string  // 签退时间 HH:MM:SS（可为空）
 	Hours   float64 // 有效工时
+	Leave   bool    // 是否请假天（请假天按 8h 计，无签退）
 }
 
-// AverageHours 计算月平均工时：只对有签退数据的天求平均，无打卡天不计入分母。
+// AverageHours 计算月平均工时：统计有签退数据的打卡天 + 请假天（8h），
+// 无打卡且无请假的天（周末/未来/当天未签退）不计入分母。
 func AverageHours(days []DayRecord) float64 {
 	var sum float64
 	var n int
 	for _, d := range days {
-		if strings.TrimSpace(d.SignOut) == "" {
+		if strings.TrimSpace(d.SignOut) == "" && !d.Leave {
 			continue
 		}
 		sum += d.Hours

@@ -290,14 +290,16 @@ func (s *Server) handleMonth(w http.ResponseWriter, r *http.Request) {
 	days := make([]dayResponse, 0, len(stats.Days))
 	for _, d := range stats.Days {
 		dr := dayResponse{
-			Date:    d.Date,
-			Weekday: d.Weekday,
-			SignIn:  d.SignIn,
-			SignOut: d.SignOut,
-			Hours:   d.Hours,
-			Found:   d.Found,
-			Late:    d.Late,
-			IsToday: d.Date == today,
+			Date:      d.Date,
+			Weekday:   d.Weekday,
+			SignIn:    d.SignIn,
+			SignOut:   d.SignOut,
+			Hours:     d.Hours,
+			Found:     d.Found,
+			Late:      d.Late,
+			Leave:     d.Leave,
+			LeaveType: d.LeaveType,
+			IsToday:   d.Date == today,
 		}
 		// 当天：只要已签到，就计算三种目标工时的签退时间（8.5h / 8h / 平均工时）。
 		if dr.IsToday && d.Found && d.SignIn != "" {
@@ -321,6 +323,7 @@ func (s *Server) handleMonth(w http.ResponseWriter, r *http.Request) {
 		StandardHours: stats.StandardHours,
 		AverageHours:  stats.AverageHours,
 		LateDays:      stats.LateDays,
+		LeaveDays:     stats.LeaveDays,
 		Today:         today,
 		Days:          days,
 	})
@@ -333,6 +336,7 @@ type monthResponse struct {
 	StandardHours float64       `json:"standardHours"`
 	AverageHours  float64       `json:"averageHours"`
 	LateDays      int           `json:"lateDays"`
+	LeaveDays     int           `json:"leaveDays"`
 	Today         string        `json:"today"`
 	Days          []dayResponse `json:"days"`
 }
@@ -345,6 +349,8 @@ type dayResponse struct {
 	Hours            float64 `json:"hours"`
 	Found            bool    `json:"found"`
 	Late             bool    `json:"late"`
+	Leave            bool    `json:"leave"`
+	LeaveType        string  `json:"leaveType,omitempty"`
 	IsToday          bool    `json:"isToday"`
 	TargetSignOut    string  `json:"targetSignOut,omitempty"`
 	RecommendSignOut string  `json:"recommendSignOut,omitempty"` // 8h 推荐下班时间

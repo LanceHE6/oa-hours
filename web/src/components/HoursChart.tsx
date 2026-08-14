@@ -8,15 +8,19 @@ interface Props {
   today: string
 }
 
+// 请假天在图表中的颜色（蓝色，区分于达标绿/未达标红）。
+const LEAVE_COLOR = '#006FEE'
+
 export default function HoursChart({ days, standardHours, month, today }: Props) {
-  // 展示所有“已过去”的天（含周末），无完整打卡数据的天（周末/当天未签退）显示为空缺，
-  // 便于一眼看出每周的工作日分布。
+  // 展示所有“已过去”的天（含周末），无数据的天（周末/当天未签退）显示为空缺。
+  // 请假天按 8h 显示，用蓝色柱区分。
   const data = days
     .filter((d) => d.date <= today)
     .map((d) => ({
       date: d.date.slice(8), // 日号
-      hours: d.found && d.signOut !== '' ? Number(d.hours.toFixed(2)) : null,
+      hours: d.found && (d.signOut !== '' || d.leave) ? Number(d.hours.toFixed(2)) : null,
       full: d.date,
+      leave: d.leave,
     }))
 
   return (
@@ -27,7 +31,10 @@ export default function HoursChart({ days, standardHours, month, today }: Props)
           <XAxis dataKey="date" stroke="#888" fontSize={11} tickLine={false} axisLine={false} interval={0} />
           <YAxis stroke="#888" fontSize={12} tickLine={false} axisLine={false} domain={[0, 'auto']} />
           <Tooltip
-            formatter={(value: number | string) => [`${Number(value).toFixed(2)}h`, '有效工时']}
+            formatter={(value: number | string, _name, props) => {
+              const leave = (props?.payload as { leave?: boolean } | undefined)?.leave
+              return [`${Number(value).toFixed(2)}h`, leave ? '请假' : '有效工时']
+            }}
             labelFormatter={(label) => `${month}-${label}`}
             contentStyle={{ background: '#18181b', border: '1px solid #333', borderRadius: 8 }}
             labelStyle={{ color: '#e4e4e7' }}
@@ -39,7 +46,15 @@ export default function HoursChart({ days, standardHours, month, today }: Props)
             {data.map((d) => (
               <Cell
                 key={d.full}
-                fill={d.hours == null ? 'transparent' : d.hours >= standardHours ? '#17c964' : '#f31260'}
+                fill={
+                  d.leave
+                    ? LEAVE_COLOR
+                    : d.hours == null
+                      ? 'transparent'
+                      : d.hours >= standardHours
+                        ? '#17c964'
+                        : '#f31260'
+                }
               />
             ))}
           </Bar>

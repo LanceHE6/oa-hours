@@ -172,13 +172,14 @@ func TestAvgTargetSignOut(t *testing.T) {
 func TestAverageHours(t *testing.T) {
 	days := []DayRecord{
 		{Date: "2026-08-03", SignIn: "08:55:12", SignOut: "20:42:53", Hours: 10.0},
+		{Date: "2026-08-09", SignOut: "", Hours: 8.0, Leave: true}, // 请假天 8h，计入平均
 		{Date: "2026-08-13", SignIn: "09:01:18", SignOut: "19:02:54", Hours: 8.0},
 		{Date: "2026-08-14", SignIn: "08:55:44", SignOut: "", Hours: 0}, // 当天未签退，不计入
 	}
 	got := AverageHours(days)
-	// (10 + 8) / 2 = 9。
-	if !closeTo(got, 9.0, 1e-9) {
-		t.Errorf("AverageHours = %.6f, want 9.0", got)
+	// (10 + 8 + 8) / 3 = 8.667。
+	if !closeTo(got, 26.0/3.0, 1e-9) {
+		t.Errorf("AverageHours = %.6f, want %.6f", got, 26.0/3.0)
 	}
 
 	if got := AverageHours(nil); got != 0 {

@@ -170,7 +170,8 @@ func (c *Client) relogin() error {
 
 // FetchDayDetail 拉取某天（YYYY-MM-DD）的考勤明细。
 //
-// 返回 (nil, nil) 表示该天无打卡数据（周末/未来/无打卡）。
+// 返回 (nil, nil) 表示该天无数据（周末/未来）。
+// 有打卡返回考勤明细；无打卡但有请假记录返回请假明细（Leave=true）。
 // 会话过期时会自动用保存的凭据重登并重试一次。
 func (c *Client) FetchDayDetail(date string) (*Detail, error) {
 	body, err := c.fetchDayDetailOnce(date)
@@ -191,10 +192,14 @@ func (c *Client) FetchDayDetail(date string) (*Detail, error) {
 		}
 	}
 	d, found := parseDetail(string(body))
-	if !found {
-		return nil, nil
+	if found {
+		return &d, nil
 	}
-	return &d, nil
+	// 无打卡数据：检查是否有请假/外出记录。
+	if name, leaveType, ok := parseLeave(string(body)); ok {
+		return &Detail{Name: name, Leave: true, LeaveType: leaveType}, nil
+	}
+	return nil, nil
 }
 
 func (c *Client) fetchDayDetailOnce(date string) ([]byte, error) {
@@ -218,18 +223,21 @@ type MonthStats struct {
 	StandardHours float64   `json:"standardHours"`
 	Days          []DayStat `json:"days"`
 	AverageHours  float64   `json:"averageHours"`
-	LateDays      int       `json:"lateDays"` // 迟到天数（签到晚于 9:00）
+	LateDays      int       `json:"lateDays"`  // 迟到天数（签到晚于 9:00）
+	LeaveDays     int       `json:"leaveDays"` // 请假/外出天数
 }
 
 // DayStat 是一天的统计结果。
 type DayStat struct {
-	Date    string  `json:"date"`    // YYYY-MM-DD
-	Weekday string  `json:"weekday"` // 周几（中文）
-	SignIn  string  `json:"signIn"`  // 签到时间 HH:MM:SS
-	SignOut string  `json:"signOut"` // 签退时间 HH:MM:SS
-	Hours   float64 `json:"hours"`   // 有效工时
-	Found   bool    `json:"found"`   // 是否有打卡数据
-	Late    bool    `json:"late"`    // 是否迟到（签到晚于 9:00）
+	Date      string  `json:"date"`      // YYYY-MM-DD
+	Weekday   string  `json:"weekday"`   // 周几（中文）
+	SignIn    string  `json:"signIn"`    // 签到时间 HH:MM:SS
+	SignOut   string  `json:"signOut"`   // 签退时间 HH:MM:SS
+	Hours     float64 `json:"hours"`     // 有效工时
+	Found     bool    `json:"found"`     // 是否有数据（打卡或请假）
+	Late      bool    `json:"late"`      // 是否迟到（签到晚于 9:00）
+	Leave     bool    `json:"leave"`     // 是否请假/外出天
+	LeaveType string  `json:"leaveType"` // 请假类型（年休假/出差等）
 }
 
 var weekdayCN = [...]string{"周日", "周一", "周二", "周三", "周四", "周五", "周六"}
@@ -291,10 +299,17 @@ func (c *Client) FetchMonth(month string) (*MonthStats, error) {
 		}
 		if r.detail != nil {
 			ds.Found = true
-			ds.SignIn = r.detail.SignIn
-			ds.SignOut = r.detail.SignOut
-			ds.Hours, _ = calc.EffectiveHours(r.detail.SignIn, r.detail.SignOut)
-			ds.Late = calc.IsLate(r.detail.SignIn)
+			if r.detail.Leave {
+				// 请假/外出天：统一按 8h 计，不管请假时长。
+				ds.Leave = true
+				ds.LeaveType = r.detail.LeaveType
+				ds.Hours = 8.0
+			} else {
+				ds.SignIn = r.detail.SignIn
+				ds.SignOut = r.detail.SignOut
+				ds.Hours, _ = calc.EffectiveHours(r.detail.SignIn, r.detail.SignOut)
+				ds.Late = calc.IsLate(r.detail.SignIn)
+			}
 			if stats.Name == "" {
 				stats.Name = r.detail.Name
 				stats.Department = r.detail.Department
@@ -303,14 +318,17 @@ func (c *Client) FetchMonth(month string) (*MonthStats, error) {
 		stats.Days[r.idx] = ds
 	}
 
-	// 统计迟到天数。
+	// 统计迟到天数与请假天数。
 	for _, d := range stats.Days {
 		if d.Late {
 			stats.LateDays++
 		}
+		if d.Leave {
+			stats.LeaveDays++
+		}
 	}
 
-	// 计算月平均工时（只对有签退数据的天，且不含今天——今天的数据可能不完整）。
+	// 计算月平均工时（打卡天 + 请假天 8h，不含今天——今天的数据可能不完整）。
 	today := time.Now().Format("2006-01-02")
 	records := make([]calc.DayRecord, 0, days)
 	for _, d := range stats.Days {
@@ -320,6 +338,7 @@ func (c *Client) FetchMonth(month string) (*MonthStats, error) {
 				SignIn:  d.SignIn,
 				SignOut: d.SignOut,
 				Hours:   d.Hours,
+				Leave:   d.Leave,
 			})
 		}
 	}

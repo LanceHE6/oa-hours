@@ -8,6 +8,14 @@ import (
 // tdRe 匹配 <td ...> 单元格文本 </td>。
 var tdRe = regexp.MustCompile(`<td[^>]*>\s*([^<]*?)\s*</td>`)
 
+// leaveTdRe 匹配请假记录表的完整单元格（含嵌套标签，如请求标题里的 <a>）。
+var leaveTdRe = regexp.MustCompile(`(?s)<td[^>]*>(.*?)</td>`)
+
+// stripTags 去除 HTML 标签，返回纯文本。
+func stripTags(s string) string {
+	return regexp.MustCompile(`<[^>]*>`).ReplaceAllString(s, "")
+}
+
 // Detail 是某天考勤明细的解析结果。
 type Detail struct {
 	Department string // 部门
@@ -16,6 +24,8 @@ type Detail struct {
 	Period     string // 工作时段，如 "08:30-18:00"
 	SignIn     string // 签到时间 HH:MM:SS
 	SignOut    string // 签退时间 HH:MM:SS（可为空，表示尚未签退）
+	Leave      bool   // 是否请假/外出天
+	LeaveType  string // 请假类型（年休假/事假/出差等）
 }
 
 // parseDetail 解析每日考勤明细接口返回的 HTML。
@@ -66,4 +76,50 @@ func parseDetail(html string) (d Detail, found bool) {
 		SignIn:     strings.TrimSpace(matches[4][1]),
 		SignOut:    strings.TrimSpace(matches[5][1]),
 	}, true
+}
+
+// parseLeave 解析每日明细页面的「考勤流程/请假记录」表，检测当天是否有请假/外出记录。
+//
+// 该表表头以「请假/外出天数」为标记（考勤明细表没有此表头，正常打卡天的页面也不含此表）。
+// 列顺序：请求标题、姓名、开始时间、结束时间、审批状态、请假/外出天数、类型。
+// 只要表里有数据行即视为“当天有请假记录”（所有类型都算）。
+//
+// 返回 (姓名, 请假类型, 是否有记录)。
+func parseLeave(html string) (name, leaveType string, found bool) {
+	idx := strings.Index(html, "请假/外出天数")
+	if idx < 0 {
+		return "", "", false
+	}
+	rest := html[idx:]
+
+	tbodyStart := strings.Index(rest, "<tbody>")
+	if tbodyStart < 0 {
+		return "", "", false
+	}
+	after := rest[tbodyStart:]
+	tbodyEnd := strings.Index(after, "</tbody>")
+	if tbodyEnd < 0 {
+		return "", "", false
+	}
+	tbody := after[:tbodyEnd]
+
+	cells := leaveTdRe.FindAllStringSubmatch(tbody, -1)
+	if len(cells) == 0 {
+		return "", "", false
+	}
+	// 类型是最后一列，但行末可能有一个空单元格（操作列占位），
+	// 因此取“最后一个非空单元格”作为类型。
+	leaveType = ""
+	for i := len(cells) - 1; i >= 0; i-- {
+		t := strings.TrimSpace(stripTags(cells[i][1]))
+		if t != "" {
+			leaveType = t
+			break
+		}
+	}
+	// 姓名是第二列（第一列“请求标题”含链接）。
+	if len(cells) >= 2 {
+		name = strings.TrimSpace(stripTags(cells[1][1]))
+	}
+	return name, leaveType, true
 }

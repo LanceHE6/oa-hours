@@ -6,6 +6,8 @@ export interface DayStat {
   hours: number
   found: boolean
   late: boolean
+  leave: boolean
+  leaveType?: string
   isToday: boolean
   targetSignOut?: string
   recommendSignOut?: string
@@ -19,6 +21,7 @@ export interface MonthResponse {
   standardHours: number
   averageHours: number
   lateDays: number
+  leaveDays: number
   today: string
   days: DayStat[]
 }
