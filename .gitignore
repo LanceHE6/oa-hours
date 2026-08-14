@@ -1,0 +1,14 @@
+# 依赖与构建产物
+web/node_modules/
+web/dist/
+
+# IDE
+.idea/
+
+# Go 二进制
+/oa-hours
+
+# 运行时数据（凭据密钥等）
+*.key
+*.dat
+data/
