@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -101,9 +102,19 @@ func logMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 		next.ServeHTTP(w, r)
 		if strings.HasPrefix(r.URL.Path, "/api/") {
-			log.Printf("%s %s (%s)", r.Method, r.URL.Path, time.Since(start))
+			log.Printf("[%s] %s %s (%s)", clientIP(r), r.Method, r.URL.Path, time.Since(start))
 		}
 	})
+}
+
+// clientIP 从 r.RemoteAddr 提取客户端 IP（去掉端口）。
+// 直接部署（无反向代理）时，RemoteAddr 即为客户端真实来源地址。
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // --- 工具方法 ---
