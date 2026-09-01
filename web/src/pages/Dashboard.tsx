@@ -16,6 +16,45 @@ function currentMonth(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
+// RefreshIcon 刷新图标（lucide refresh-cw 路径，内联避免新增依赖）。
+function RefreshIcon({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <polyline points="21 3 21 9 15 9" />
+    </svg>
+  )
+}
+
+// AlertIcon 警告图标（lucide alert-triangle 路径）。
+function AlertIcon({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+      <path d="M12 9v4" />
+      <path d="M12 17h.01" />
+    </svg>
+  )
+}
+
 export default function Dashboard({ onLogout }: Props) {
   const [month, setMonth] = useState(currentMonth())
   const [data, setData] = useState<MonthResponse | null>(null)
@@ -25,9 +64,14 @@ export default function Dashboard({ onLogout }: Props) {
   const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null)
   const [calcSignOut, setCalcSignOut] = useState('')
   const [calcHours, setCalcHours] = useState<number | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
 
-  const load = useCallback(async (m: string) => {
-    setLoading(true)
+  const load = useCallback(async (m: string, background = false) => {
+    if (background) {
+      setRefreshing(true)
+    } else {
+      setLoading(true)
+    }
     setError('')
     try {
       const res = await apiGet<MonthResponse>(`/api/month?month=${m}`)
@@ -35,6 +79,7 @@ export default function Dashboard({ onLogout }: Props) {
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败')
     } finally {
+      setRefreshing(false)
       setLoading(false)
     }
   }, [])
@@ -143,6 +188,15 @@ export default function Dashboard({ onLogout }: Props) {
               <SelectItem key={String(m).padStart(2, '0')} textValue={`${m} 月`}>{m} 月</SelectItem>
             ))}
           </Select>
+          <Button
+            size="sm"
+            variant="flat"
+            isLoading={refreshing}
+            startContent={<RefreshIcon />}
+            onPress={() => load(month, true)}
+          >
+            刷新
+          </Button>
         </div>
 
         {loading && (
@@ -151,14 +205,26 @@ export default function Dashboard({ onLogout }: Props) {
           </div>
         )}
 
-        {error && (
+        {error && !data && (
           <Card className="mt-6">
             <CardBody className="text-danger">{error}</CardBody>
           </Card>
         )}
 
-        {!loading && !error && data && (
+        {!loading && data && (
           <>
+            {/* 刷新/加载失败提示（已有数据时保留旧数据） */}
+            {error && (
+              <div className="mt-4 flex justify-center">
+                <Card className="w-full max-w-md">
+                  <CardBody className="flex items-center gap-2 px-4 py-3 text-sm text-danger">
+                    <AlertIcon />
+                    <span>{error}</span>
+                  </CardBody>
+                </Card>
+              </div>
+            )}
+
             {/* 汇总卡片 */}
             <div className="mt-6 flex flex-wrap gap-4">
               <SummaryCard
