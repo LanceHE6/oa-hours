@@ -20,7 +20,7 @@ const colorClass: Record<NonNullable<Props['color']>, string> = {
 
 export default function SummaryCard({ title, value, subtitle, color = 'default', tip }: Props) {
   return (
-    <Card className="flex-1">
+    <Card className="min-w-[150px] flex-1">
       <CardBody className="gap-1 py-4">
         <p className="flex items-center text-xs text-default-500">
           {title}

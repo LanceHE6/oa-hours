@@ -1,0 +1,8 @@
+{
+  "appId": "com.lancehe6.oahours",
+  "appName": "Macrosan OA Hours",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": true
+  }
+}

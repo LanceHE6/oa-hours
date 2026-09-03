@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button, Card, CardBody, Select, SelectItem, Spinner } from '@nextui-org/react'
-import { apiGet, apiPost, type BuildInfo, type MonthResponse } from '../api'
+import type { BuildInfo, MonthResponse } from '../api'
+import type { DataProvider } from '../provider'
 import { formatHours, hoursToHm, shortTime } from '../format'
 import SummaryCard from '../components/SummaryCard'
 import DayTable from '../components/DayTable'
@@ -8,6 +9,7 @@ import HoursChart from '../components/HoursChart'
 import HelpTip from '../components/HelpTip'
 
 interface Props {
+  provider: DataProvider
   onLogout: () => void
 }
 
@@ -55,7 +57,7 @@ function AlertIcon({ className = 'h-4 w-4' }: { className?: string }) {
   )
 }
 
-export default function Dashboard({ onLogout }: Props) {
+export default function Dashboard({ provider, onLogout }: Props) {
   const [month, setMonth] = useState(currentMonth())
   const [data, setData] = useState<MonthResponse | null>(null)
   const [error, setError] = useState('')
@@ -74,7 +76,7 @@ export default function Dashboard({ onLogout }: Props) {
     }
     setError('')
     try {
-      const res = await apiGet<MonthResponse>(`/api/month?month=${m}`)
+      const res = await provider.getMonth(m)
       setData(res)
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败')
@@ -82,21 +84,21 @@ export default function Dashboard({ onLogout }: Props) {
       setRefreshing(false)
       setLoading(false)
     }
-  }, [])
+  }, [provider])
 
   useEffect(() => {
     load(month)
   }, [month, load])
 
   useEffect(() => {
-    apiGet<BuildInfo>('/api/buildinfo')
+    provider.getBuildInfo()
       .then(setBuildInfo)
       .catch(() => {})
-  }, [])
+  }, [provider])
 
   const logout = async () => {
     try {
-      await apiPost('/api/logout', {})
+      await provider.logout()
     } finally {
       onLogout()
     }
@@ -117,11 +119,10 @@ export default function Dashboard({ onLogout }: Props) {
       setCalcHours(null)
       return
     }
-    const q = `signIn=${encodeURIComponent(todayStat.signIn)}&signOut=${encodeURIComponent(calcSignOut)}`
-    apiGet<{ hours: number }>(`/api/calc?${q}`)
+    provider.calcHours(todayStat.signIn, calcSignOut)
       .then((res) => setCalcHours(res.hours))
       .catch(() => setCalcHours(null))
-  }, [calcSignOut, todayStat?.signIn])
+  }, [calcSignOut, todayStat?.signIn, provider])
 
   const targetValue =
     targetOption === 'standard'
@@ -159,7 +160,7 @@ export default function Dashboard({ onLogout }: Props) {
         </div>
 
         {/* 月份导航 */}
-        <div className="mt-4 flex items-center justify-center gap-3">
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
           <Select
             aria-label="年份"
             size="sm"

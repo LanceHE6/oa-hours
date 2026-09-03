@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react'
 import { Spinner } from '@nextui-org/react'
-import { apiGet, type AuthResponse } from './api'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
+import { createProvider, type DataProvider } from './provider'
 
 export default function App() {
   const [loading, setLoading] = useState(true)
   const [loggedIn, setLoggedIn] = useState(false)
+  const [provider, setProvider] = useState<DataProvider | null>(null)
 
   useEffect(() => {
-    apiGet<AuthResponse>('/api/auth')
-      .then((a) => setLoggedIn(a.loggedIn))
+    const p = createProvider()
+    setProvider(p)
+    p.isLoggedIn()
+      .then(setLoggedIn)
       .catch(() => setLoggedIn(false))
       .finally(() => setLoading(false))
   }, [])
@@ -23,5 +26,11 @@ export default function App() {
     )
   }
 
-  return loggedIn ? <Dashboard onLogout={() => setLoggedIn(false)} /> : <Login onLogin={() => setLoggedIn(true)} />
+  if (!provider) return null
+
+  return loggedIn ? (
+    <Dashboard provider={provider} onLogout={() => setLoggedIn(false)} />
+  ) : (
+    <Login provider={provider} onLogin={() => setLoggedIn(true)} />
+  )
 }

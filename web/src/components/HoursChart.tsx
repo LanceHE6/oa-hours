@@ -41,8 +41,7 @@ export default function HoursChart({ days, standardHours, month, today }: Props)
             itemStyle={{ color: '#e4e4e7' }}
             cursor={{ fill: 'rgba(255,255,255,0.06)' }}
           />
-          <ReferenceLine y={standardHours} stroke="#f5a524" strokeDasharray="4 4" label={{ value: '达标', fill: '#f5a524', fontSize: 12 }} />
-          <Bar dataKey="hours" radius={[4, 4, 0, 0]}>
+          <Bar dataKey="hours" maxBarSize={40} radius={[4, 4, 0, 0]}>
             {data.map((d) => (
               <Cell
                 key={d.full}
@@ -58,6 +57,13 @@ export default function HoursChart({ days, standardHours, month, today }: Props)
               />
             ))}
           </Bar>
+          {/* 达标线放柱体之后绘制，保证线和标签不被柱子遮挡 */}
+          <ReferenceLine
+            y={standardHours}
+            stroke="#f5a524"
+            strokeDasharray="4 4"
+            label={{ value: '达标', fill: '#f5a524', fontSize: 12, position: 'top', offset: 8 }}
+          />
         </BarChart>
       </ResponsiveContainer>
     </div>

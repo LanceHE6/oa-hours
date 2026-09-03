@@ -9,6 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.1",
+    "@capacitor/cli": "^8.5.1",
+    "@capacitor/core": "^8.5.1",
     "@nextui-org/react": "^2.6.11",
     "framer-motion": "^13.1.0",
     "react": "^18.3.1",
