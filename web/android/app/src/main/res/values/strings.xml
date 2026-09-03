@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Macrosan OA Hours</string>
+    <string name="title_activity_main">Macrosan OA Hours</string>
+    <string name="package_name">com.lancehe6.oahours</string>
+    <string name="custom_url_scheme">com.lancehe6.oahours</string>
+</resources>
