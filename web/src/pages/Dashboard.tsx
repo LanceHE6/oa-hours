@@ -161,6 +161,21 @@ export default function Dashboard({ provider, onLogout }: Props) {
       .catch(() => setCalcHours(null))
   }, [calcSignOut, todayStat?.signIn, provider])
 
+  const calcMonthAvg = useMemo(() => {
+    if (calcHours == null || !data) return null
+    let sumHours = 0
+    let doneCount = 0
+    for (const d of data.days) {
+      if (d.date !== data.today && (d.leave || d.signOut !== '')) {
+        sumHours += d.hours
+        doneCount++
+      }
+    }
+    const newTotal = sumHours + calcHours
+    const newCount = doneCount + 1
+    return newCount > 0 ? newTotal / newCount : 0
+  }, [calcHours, data])
+
   const targetValue =
     targetOption === 'nine'
       ? todayStat?.nineSignOut
@@ -403,17 +418,33 @@ export default function Dashboard({ provider, onLogout }: Props) {
                       }
                     />
                   </p>
-                  <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-4">
                     <input
                       type="time"
                       value={calcSignOut}
                       onChange={(e) => setCalcSignOut(e.target.value)}
                       className="rounded-lg border border-default-200 bg-default-100 px-3 py-1.5 text-sm text-foreground outline-none [color-scheme:dark] focus:border-primary"
                     />
-                    <span className="text-sm text-default-500">当日有效工时</span>
-                    <span className="text-xl font-semibold text-primary">
-                      {calcHours != null ? formatHours(calcHours) : '—'}
-                    </span>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-sm text-default-500">当日有效工时</span>
+                      <span className="text-xl font-semibold text-primary">
+                        {calcHours != null ? formatHours(calcHours) : '—'}
+                      </span>
+                    </div>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-sm text-default-500">截至今日月平均</span>
+                      <span
+                        className={`text-xl font-semibold ${
+                          calcMonthAvg != null
+                            ? calcMonthAvg >= userStandardHours
+                              ? 'text-success'
+                              : 'text-warning'
+                            : 'text-default-400'
+                        }`}
+                      >
+                        {calcMonthAvg != null ? formatHours(calcMonthAvg) : '—'}
+                      </span>
+                    </div>
                   </div>
                   <p className="text-xs text-default-400">今天签到 {shortTime(todayStat.signIn)}</p>
                 </CardBody>
