@@ -346,8 +346,11 @@ func (s *Server) handleMonth(w http.ResponseWriter, r *http.Request) {
 			LeaveType: d.LeaveType,
 			IsToday:   d.Date == today,
 		}
-		// 当天：只要已签到，就计算三种目标工时的签退时间（8.5h / 8h / 平均工时）。
+		// 当天：只要已签到，就计算各种目标工时的签退时间（9h / 8.5h / 8h / 平均工时）。
 		if dr.IsToday && d.Found && d.SignIn != "" {
+			if nine, err := calc.TargetSignOutFor(d.SignIn, calc.NineHours); err == nil {
+				dr.NineSignOut = nine
+			}
 			if target, err := calc.TargetSignOut(d.SignIn); err == nil {
 				dr.TargetSignOut = target
 			}
@@ -399,6 +402,7 @@ type dayResponse struct {
 	Leave            bool    `json:"leave"`
 	LeaveType        string  `json:"leaveType,omitempty"`
 	IsToday          bool    `json:"isToday"`
+	NineSignOut      string  `json:"nineSignOut,omitempty"`      // 9h 目标下班时间
 	TargetSignOut    string  `json:"targetSignOut,omitempty"`
 	RecommendSignOut string  `json:"recommendSignOut,omitempty"` // 8h 推荐下班时间
 	AvgSignOut       string  `json:"avgSignOut,omitempty"`       // 平均工时（补足到 8.5h）下班时间

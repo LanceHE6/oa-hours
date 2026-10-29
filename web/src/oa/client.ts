@@ -7,7 +7,7 @@
 // Cookie 由 CookieJar 统一管理（手动解析 Set-Cookie），两种 transport 行为一致。
 
 import type { BuildInfo, DayStat, MonthResponse } from '../api.ts'
-import { averageHours, effectiveHours, isLate, targetSignOut, targetSignOutFor, avgTargetSignOut, EIGHT_HOURS, STANDARD_HOURS, type DayRecord } from './calc.ts'
+import { averageHours, effectiveHours, isLate, targetSignOut, targetSignOutFor, avgTargetSignOut, EIGHT_HOURS, NINE_HOURS, STANDARD_HOURS, type DayRecord } from './calc.ts'
 import { parseDetail, parseLeave, type OaDetail } from './parse.ts'
 
 export const OA_BASE_URL = 'http://office.macrosan.com'
@@ -328,9 +328,10 @@ export class OaClient {
     }
     const average = averageHours(records)
 
-    // 当天：只要已签到，就计算三种目标工时的签退时间（8.5h / 8h / 平均工时）。
+    // 当天：只要已签到，就计算各种目标工时的签退时间（9h / 8.5h / 8h / 平均工时）。
     for (const d of stats) {
       if (d.isToday && d.found && d.signIn !== '') {
+        d.nineSignOut = targetSignOutFor(d.signIn, NINE_HOURS) || undefined
         d.targetSignOut = targetSignOut(d.signIn) || undefined
         d.recommendSignOut = targetSignOutFor(d.signIn, EIGHT_HOURS) || undefined
         d.avgSignOut = avgTargetSignOut(d.signIn, sumHours, doneCount, STANDARD_HOURS) || undefined

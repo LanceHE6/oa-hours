@@ -1,17 +1,16 @@
 // 工时计算规则（与 Go 端 internal/calc/hours.go 逐条移植）。
 //
 // 规则（与用户确认）：
-//   - 签到时间 in <= 8:30：计薪起点 S = 8:30，扣午休 1.5h（早到不计额外工时）
-//   - 8:30 < in <= 9:00：S = in，扣午休 1.5h
+//   - 签到时间 in <= 9:00：计薪起点 S = in，扣午休 1.5h（早于 8:30 也按实际签到计入工时）
 //   - in > 9:00：S = in，扣午休 1.5h，且仅当签退时间 out > 18:00 时额外扣晚饭 0.5h
 //
 // 达标工时 = 8.5h，用于计算当天目标签退时间。
 
+export const NINE_HOURS = 9.0
 export const STANDARD_HOURS = 8.5
 export const EIGHT_HOURS = 8.0
 
 // 各种时间阈值（以“自午夜起的秒数”表示）。
-const startFloorSec = (8 * 60 + 30) * 60 // 8:30，早到计薪起点
 const lateThresholdSec = 9 * 3600 // 9:00，工时计算里“9点后”扣晚饭的边界
 const dinnerThreshold = 18 * 3600 // 18:00，签退超过才扣晚饭
 const earliestSignOutSec = 18 * 3600 // 18:00，最早可签退时间（早于算早退）
@@ -41,8 +40,12 @@ export function parseClock(s: string): number | null {
   return h * 3600 + m * 60 + sec
 }
 
-// formatClock 将自午夜起的秒数格式化为 "HH:MM"。
+// formatClock 将自午夜起的秒数格式化为 "HH:MM"，跨天时带 "+1d" 或 "次日"。
 export function formatClock(seconds: number): string {
+  if (seconds >= 24 * 3600) {
+    const s = seconds % (24 * 3600)
+    return `次日 ${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}`
+  }
   const s = ((seconds % 86400) + 86400) % 86400
   return `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}`
 }
@@ -57,9 +60,8 @@ export function effectiveHours(inTime: string, outTime: string): number {
   const outSec = parseClock(out)
   if (outSec == null) return 0
 
-  // 计薪起点：早到封底在 8:30。
-  let start = inSec
-  if (inSec < startFloorSec) start = startFloorSec
+  // 计薪起点：按实际签到时间。
+  const start = inSec
 
   const elapsed = outSec - start
   if (elapsed < 0) {
@@ -85,14 +87,12 @@ export function targetSignOut(inTime: string): string {
 
 // targetSignOutFor 计算当天目标签退时间，使有效工时达到指定 targetHours。
 // 规则（与 effectiveHours 一致，扣除项只取决于签到时间）：
-//   - in <= 8:30 → 8:30 起步
-//   - 8:30 < in <= 9:00 → in 起步，扣午休 1.5h
+//   - in <= 9:00 → in 起步，扣午休 1.5h
 //   - in > 9:00 → in 起步，扣午休 1.5h + 晚饭 0.5h（此时目标签退必然 > 18:00）
 export function targetSignOutFor(inTime: string, targetHours: number): string {
   const inSec = parseClock(inTime)
   if (inSec == null) return ''
-  let start = inSec
-  if (inSec < startFloorSec) start = startFloorSec
+  const start = inSec
 
   const targetEffective = Math.round(targetHours * 3600)
 
@@ -100,7 +100,9 @@ export function targetSignOutFor(inTime: string, targetHours: number): string {
   let dinner = 0
   if (inSec > lateThresholdSec) dinner = dinnerBreakSec
 
-  return formatClock(start + targetEffective + lunchBreakSec + dinner)
+  const outSec = start + targetEffective + lunchBreakSec + dinner
+  if (outSec < earliestSignOutSec) return formatClock(earliestSignOutSec)
+  return formatClock(outSec)
 }
 
 // avgTargetSignOut 计算使月平均工时达到 target 的最早签退时间。
@@ -108,7 +110,7 @@ export function targetSignOutFor(inTime: string, targetHours: number): string {
 //   doneDays 当月已完成天数（不含今天）。
 // 今日需工时 need = target*(doneDays+1) - sumHours，且不得低于 8h：
 //   - need 不足 8h 时按 8h 计（当日工时不得低于 8h）；
-//   - 结果若早于 18:00 则取 18:00（早退下限）。
+//   - 计算出的签退时间若早于 18:00（如极端异常），受 18:00 早退下限保护。
 export function avgTargetSignOut(
   inTime: string,
   sumHours: number,
@@ -118,12 +120,17 @@ export function avgTargetSignOut(
   let need = target * (doneDays + 1) - sumHours
   // 当日工时不得低于 8h。
   if (need < EIGHT_HOURS) need = EIGHT_HOURS
-  const out = targetSignOutFor(inTime, need)
-  if (out === '') return ''
-  const outSec = parseClock(out)
-  if (outSec == null) return ''
+
+  const inSec = parseClock(inTime)
+  if (inSec == null) return ''
+
+  const targetEffective = Math.round(need * 3600)
+  let dinner = 0
+  if (inSec > lateThresholdSec) dinner = dinnerBreakSec
+
+  const outSec = inSec + targetEffective + lunchBreakSec + dinner
   if (outSec < earliestSignOutSec) return formatClock(earliestSignOutSec)
-  return out
+  return formatClock(outSec)
 }
 
 // isLate 判断是否迟到：签到时间晚于 9:00:59（即 9:01:00 及以后）算迟到。

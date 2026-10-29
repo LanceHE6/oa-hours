@@ -9,6 +9,7 @@ export interface DayStat {
   leave: boolean
   leaveType?: string
   isToday: boolean
+  nineSignOut?: string
   targetSignOut?: string
   recommendSignOut?: string
   avgSignOut?: string

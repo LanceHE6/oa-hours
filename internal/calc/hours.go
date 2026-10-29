@@ -1,8 +1,7 @@
 // Package calc 实现工时计算规则（纯函数，无外部依赖，便于单元测试）。
 //
 // 规则（与用户确认）：
-//   - 签到时间 in <= 8:30：计薪起点 S = 8:30，扣午休 1.5h（早到不计额外工时）
-//   - 8:30 < in <= 9:00：S = in，扣午休 1.5h
+//   - 签到时间 in <= 9:00：计薪起点 S = in，扣午休 1.5h（早于 8:30 也按实际签到计入工时）
 //   - in > 9:00：S = in，扣午休 1.5h，且仅当签退时间 out > 18:00 时额外扣晚饭 0.5h
 //
 // 达标工时 = 8.5h，用于计算当天目标签退时间。
@@ -19,11 +18,13 @@ const (
 	// StandardHours 达标工时（小时）。
 	StandardHours = 8.5
 
+	// NineHours 9 小时目标工时选项（小时）。
+	NineHours = 9.0
+
 	// EightHours 8 小时目标工时选项（小时）。
 	EightHours = 8.0
 
 	// 各种时间阈值（以“自午夜起的秒数”表示）。
-	startFloorSec      = (8*60 + 30) * 60 // 8:30，早到计薪起点
 	lateThresholdSec   = 9 * 3600         // 9:00，工时计算里“9点后”扣晚饭的边界
 	dinnerThreshold    = 18 * 3600        // 18:00，签退超过才扣晚饭
 	earliestSignOutSec = 18 * 3600        // 18:00，最早可签退时间（早于算早退）
@@ -63,8 +64,12 @@ func ParseClock(s string) (int, error) {
 	return h*3600 + m*60 + sec, nil
 }
 
-// FormatClock 将自午夜起的秒数格式化为 "HH:MM"。
+// FormatClock 将自午夜起的秒数格式化为 "HH:MM"，跨天时带 "+1d" 或 "次日"。
 func FormatClock(seconds int) string {
+	if seconds >= 24*3600 {
+		s := seconds % (24 * 3600)
+		return fmt.Sprintf("次日 %02d:%02d", s/3600, (s%3600)/60)
+	}
 	seconds = ((seconds % (24 * 3600)) + 24*3600) % (24 * 3600)
 	return fmt.Sprintf("%02d:%02d", seconds/3600, (seconds%3600)/60)
 }
@@ -88,11 +93,8 @@ func EffectiveHours(in, out string) (float64, error) {
 		return 0, fmt.Errorf("签退时间: %w", err)
 	}
 
-	// 计薪起点：早到封底在 8:30。
+	// 计薪起点：按实际签到时间。
 	start := inSec
-	if inSec < startFloorSec {
-		start = startFloorSec
-	}
 
 	elapsed := outSec - start
 	if elapsed < 0 {
@@ -122,8 +124,7 @@ func TargetSignOut(in string) (string, error) {
 // TargetSignOutFor 计算当天目标签退时间，使有效工时达到指定 targetHours。
 //
 // 规则（与 EffectiveHours 一致，扣除项只取决于签到时间）：
-//   - in <= 8:30 → 8:30 起步
-//   - 8:30 < in <= 9:00 → in 起步，扣午休 1.5h
+//   - in <= 9:00 → in 起步，扣午休 1.5h
 //   - in > 9:00 → in 起步，扣午休 1.5h + 晚饭 0.5h（此时目标签退必然 > 18:00）
 func TargetSignOutFor(in string, targetHours float64) (string, error) {
 	inSec, err := ParseClock(in)
@@ -132,10 +133,6 @@ func TargetSignOutFor(in string, targetHours float64) (string, error) {
 	}
 
 	start := inSec
-	if inSec < startFloorSec {
-		start = startFloorSec
-	}
-
 	targetEffective := int(targetHours * 3600)
 
 	// 扣晚饭仅当 9 点后签到（此时目标签退必然 > 18:00）。
@@ -145,6 +142,9 @@ func TargetSignOutFor(in string, targetHours float64) (string, error) {
 	}
 
 	outSec := start + targetEffective + lunchBreakSec + dinner
+	if outSec < earliestSignOutSec {
+		return FormatClock(earliestSignOutSec), nil
+	}
 	return FormatClock(outSec), nil
 }
 
@@ -155,25 +155,30 @@ func TargetSignOutFor(in string, targetHours float64) (string, error) {
 //
 // 今日需工时 need = target*(doneDays+1) - sumHours，且不得低于 8h：
 //   - need 不足 8h 时按 8h 计（当日工时不得低于 8h）；
-//   - 结果若早于 18:00 则取 18:00（早退下限）。
+//   - 计算出的签退时间若早于 18:00（如极端异常），受 18:00 早退下限保护。
 func AvgTargetSignOut(in string, sumHours float64, doneDays int, target float64) (string, error) {
 	need := target*float64(doneDays+1) - sumHours
 	// 当日工时不得低于 8h。
 	if need < EightHours {
 		need = EightHours
 	}
-	out, err := TargetSignOutFor(in, need)
+	inSec, err := ParseClock(in)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("签到时间: %w", err)
 	}
-	outSec, err := ParseClock(out)
-	if err != nil {
-		return "", err
+
+	targetEffective := int(need * 3600)
+	dinner := 0
+	if inSec > lateThresholdSec {
+		dinner = dinnerBreakSec
 	}
+	outSec := inSec + targetEffective + lunchBreakSec + dinner
+
+	// 如果小于 18:00 则受早退下限限制
 	if outSec < earliestSignOutSec {
 		return FormatClock(earliestSignOutSec), nil
 	}
-	return out, nil
+	return FormatClock(outSec), nil
 }
 
 // IsLate 判断是否迟到：签到时间晚于 9:00:59（即 9:01:00 及以后）算迟到。
