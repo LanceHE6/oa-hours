@@ -1,10 +1,21 @@
 // 工时计算规则（与 Go 端 internal/calc/hours.go 逐条移植）。
 //
-// 规则（与用户确认）：
+// 模式 A（默认）：
 //   - 签到时间 in <= 9:00：计薪起点 S = in，扣午休 1.5h（早于 8:30 也按实际签到计入工时）
 //   - in > 9:00：S = in，扣午休 1.5h，且仅当签退时间 out > 18:00 时额外扣晚饭 0.5h
+// 模式 B：
+//   - 无论是否 9 点后签到，均只扣午休 1.5h，不扣晚饭 0.5h
 //
 // 达标工时 = 8.5h，用于计算当天目标签退时间。
+
+export type CalcMode = 'A' | 'B'
+export const DEFAULT_CALC_MODE: CalcMode = 'A'
+
+// parseCalcMode 解析工时计算模式：'B'/'b'（trim 后）返回 'B'，其余安全回退为 'A'。
+export function parseCalcMode(v: string | null | undefined): CalcMode {
+  if (v != null && v.trim().toUpperCase() === 'B') return 'B'
+  return DEFAULT_CALC_MODE
+}
 
 export const NINE_HOURS = 9.0
 export const STANDARD_HOURS = 8.5
@@ -28,6 +39,7 @@ export function parseClock(s: string): number | null {
   if (t === '') return null
   const parts = t.split(':')
   if (parts.length < 2 || parts.length > 3) return null
+  if (parts.some((p) => !/^\d+$/.test(p))) return null
   const h = Number(parts[0])
   const m = Number(parts[1])
   if (!Number.isInteger(h) || h < 0 || h > 23) return null
@@ -52,7 +64,7 @@ export function formatClock(seconds: number): string {
 
 // effectiveHours 计算某天有效工时（小时，浮点）。
 //   in  签到时间 "HH:MM[:SS]"；out 签退时间，为空表示尚未签退（返回 0）。
-export function effectiveHours(inTime: string, outTime: string): number {
+export function effectiveHours(inTime: string, outTime: string, mode: CalcMode = 'A'): number {
   const inSec = parseClock(inTime)
   if (inSec == null) return 0
   const out = outTime.trim()
@@ -71,8 +83,8 @@ export function effectiveHours(inTime: string, outTime: string): number {
 
   // 扣除午休（固定 1.5h）。
   let deduct = lunchBreakSec
-  // 9 点后签到 且 18 点后签退，额外扣晚饭 0.5h。
-  if (inSec > lateThresholdSec && outSec > dinnerThreshold) {
+  // 模式 A：9 点后签到 且 18 点后签退，额外扣晚饭 0.5h；模式 B 不扣晚饭。
+  if (mode !== 'B' && inSec > lateThresholdSec && outSec > dinnerThreshold) {
     deduct += dinnerBreakSec
   }
 
@@ -81,24 +93,24 @@ export function effectiveHours(inTime: string, outTime: string): number {
 }
 
 // targetSignOut 计算当天目标签退时间，使有效工时达到达标工时（8.5h）。
-export function targetSignOut(inTime: string): string {
-  return targetSignOutFor(inTime, STANDARD_HOURS)
+export function targetSignOut(inTime: string, mode: CalcMode = 'A'): string {
+  return targetSignOutFor(inTime, STANDARD_HOURS, mode)
 }
 
 // targetSignOutFor 计算当天目标签退时间，使有效工时达到指定 targetHours。
-// 规则（与 effectiveHours 一致，扣除项只取决于签到时间）：
-//   - in <= 9:00 → in 起步，扣午休 1.5h
-//   - in > 9:00 → in 起步，扣午休 1.5h + 晚饭 0.5h（此时目标签退必然 > 18:00）
-export function targetSignOutFor(inTime: string, targetHours: number): string {
+// 规则（与 effectiveHours 一致，扣除项只取决于签到时间与计算模式）：
+//   - 模式 A：in <= 9:00 扣午休 1.5h；in > 9:00 扣午休 1.5h + 晚饭 0.5h（此时目标签退必然 > 18:00）
+//   - 模式 B：无论是否 9 点后签到，均只扣午休 1.5h，不扣晚饭 0.5h
+export function targetSignOutFor(inTime: string, targetHours: number, mode: CalcMode = 'A'): string {
   const inSec = parseClock(inTime)
   if (inSec == null) return ''
   const start = inSec
 
   const targetEffective = Math.round(targetHours * 3600)
 
-  // 扣晚饭仅当 9 点后签到（此时目标签退必然 > 18:00）。
+  // 扣晚饭仅当模式 A 且 9 点后签到（此时目标签退必然 > 18:00）。
   let dinner = 0
-  if (inSec > lateThresholdSec) dinner = dinnerBreakSec
+  if (mode !== 'B' && inSec > lateThresholdSec) dinner = dinnerBreakSec
 
   const outSec = start + targetEffective + lunchBreakSec + dinner
   if (outSec < earliestSignOutSec) return formatClock(earliestSignOutSec)
@@ -116,21 +128,13 @@ export function avgTargetSignOut(
   sumHours: number,
   doneDays: number,
   target: number,
+  mode: CalcMode = 'A',
 ): string {
   let need = target * (doneDays + 1) - sumHours
   // 当日工时不得低于 8h。
   if (need < EIGHT_HOURS) need = EIGHT_HOURS
 
-  const inSec = parseClock(inTime)
-  if (inSec == null) return ''
-
-  const targetEffective = Math.round(need * 3600)
-  let dinner = 0
-  if (inSec > lateThresholdSec) dinner = dinnerBreakSec
-
-  const outSec = inSec + targetEffective + lunchBreakSec + dinner
-  if (outSec < earliestSignOutSec) return formatClock(earliestSignOutSec)
-  return formatClock(outSec)
+  return targetSignOutFor(inTime, need, mode)
 }
 
 // isLate 判断是否迟到：签到时间晚于 9:00:59（即 9:01:00 及以后）算迟到。

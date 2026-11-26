@@ -1,3 +1,5 @@
+import type { CalcMode } from './oa/calc'
+
 export interface DayStat {
   date: string
   weekday: string
@@ -17,6 +19,7 @@ export interface DayStat {
 
 export interface MonthResponse {
   month: string
+  mode?: CalcMode
   name: string
   department: string
   standardHours: number

@@ -7,7 +7,7 @@
 // Cookie 由 CookieJar 统一管理（手动解析 Set-Cookie），两种 transport 行为一致。
 
 import type { BuildInfo, DayStat, MonthResponse } from '../api.ts'
-import { averageHours, effectiveHours, isLate, targetSignOut, targetSignOutFor, avgTargetSignOut, EIGHT_HOURS, NINE_HOURS, STANDARD_HOURS, type DayRecord } from './calc.ts'
+import { averageHours, effectiveHours, isLate, targetSignOut, targetSignOutFor, avgTargetSignOut, parseCalcMode, EIGHT_HOURS, NINE_HOURS, STANDARD_HOURS, type CalcMode, type DayRecord } from './calc.ts'
 import { parseDetail, parseLeave, type OaDetail } from './parse.ts'
 
 export const OA_BASE_URL = 'http://office.macrosan.com'
@@ -256,7 +256,8 @@ export class OaClient {
   }
 
   /** 拉取某月（YYYY-MM）每天的考勤明细并计算工时（并发 6 拉取）。返回与 Web 版一致的 MonthResponse。 */
-  async fetchMonth(month: string): Promise<MonthResponse> {
+  async fetchMonth(month: string, mode: CalcMode = 'A'): Promise<MonthResponse> {
+    const calcMode = parseCalcMode(mode)
     const match = /^(\d{4})-(\d{2})$/.exec(month)
     if (!match) throw new Error(`月份格式错误 ${month}`)
     const year = Number(match[1])
@@ -296,7 +297,7 @@ export class OaClient {
           } else {
             ds.signIn = detail.signIn
             ds.signOut = detail.signOut
-            ds.hours = effectiveHours(detail.signIn, detail.signOut)
+            ds.hours = effectiveHours(detail.signIn, detail.signOut, calcMode)
             ds.late = isLate(detail.signIn)
           }
           if (name === '') {
@@ -331,15 +332,16 @@ export class OaClient {
     // 当天：只要已签到，就计算各种目标工时的签退时间（9h / 8.5h / 8h / 平均工时）。
     for (const d of stats) {
       if (d.isToday && d.found && d.signIn !== '') {
-        d.nineSignOut = targetSignOutFor(d.signIn, NINE_HOURS) || undefined
-        d.targetSignOut = targetSignOut(d.signIn) || undefined
-        d.recommendSignOut = targetSignOutFor(d.signIn, EIGHT_HOURS) || undefined
-        d.avgSignOut = avgTargetSignOut(d.signIn, sumHours, doneCount, STANDARD_HOURS) || undefined
+        d.nineSignOut = targetSignOutFor(d.signIn, NINE_HOURS, calcMode) || undefined
+        d.targetSignOut = targetSignOut(d.signIn, calcMode) || undefined
+        d.recommendSignOut = targetSignOutFor(d.signIn, EIGHT_HOURS, calcMode) || undefined
+        d.avgSignOut = avgTargetSignOut(d.signIn, sumHours, doneCount, STANDARD_HOURS, calcMode) || undefined
       }
     }
 
     return {
       month,
+      mode: calcMode,
       name,
       department,
       standardHours: STANDARD_HOURS,

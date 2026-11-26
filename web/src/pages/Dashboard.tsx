@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Card, CardBody, Select, SelectItem, Spinner } from '@nextui-org/react'
 import type { BuildInfo, MonthResponse } from '../api'
 import type { DataProvider } from '../provider'
@@ -7,7 +7,19 @@ import SummaryCard from '../components/SummaryCard'
 import DayTable from '../components/DayTable'
 import HoursChart from '../components/HoursChart'
 import HelpTip from '../components/HelpTip'
-import { avgTargetSignOut } from '../oa/calc'
+import GlobalSettings from '../components/GlobalSettings'
+import {
+  averageHours,
+  avgTargetSignOut,
+  EIGHT_HOURS,
+  effectiveHours,
+  NINE_HOURS,
+  parseCalcMode,
+  targetSignOut,
+  targetSignOutFor,
+  type CalcMode,
+  type DayRecord,
+} from '../oa/calc'
 
 interface Props {
   provider: DataProvider
@@ -60,6 +72,7 @@ function AlertIcon({ className = 'h-4 w-4' }: { className?: string }) {
 
 const TARGET_STANDARD_KEY = 'target_standard_hours'
 const DEFAULT_STANDARD_HOURS = 8.5
+const CALC_MODE_KEY = 'calc_mode'
 
 export default function Dashboard({ provider, onLogout }: Props) {
   const [month, setMonth] = useState(currentMonth())
@@ -67,6 +80,10 @@ export default function Dashboard({ provider, onLogout }: Props) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [targetOption, setTargetOption] = useState<'nine' | 'standard' | 'eight' | 'avg'>('standard')
+  const [calcMode, setCalcMode] = useState<CalcMode>(() =>
+    parseCalcMode(localStorage.getItem(CALC_MODE_KEY)),
+  )
+  const calcModeRef = useRef<CalcMode>(calcMode)
   const [userStandardHours, setUserStandardHours] = useState<number>(() => {
     const saved = localStorage.getItem(TARGET_STANDARD_KEY)
     if (saved) {
@@ -79,6 +96,13 @@ export default function Dashboard({ provider, onLogout }: Props) {
   const [calcSignOut, setCalcSignOut] = useState('')
   const [calcHours, setCalcHours] = useState<number | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const loadSeqRef = useRef(0)
+
+  const handleCalcModeChange = (mode: CalcMode) => {
+    calcModeRef.current = mode
+    setCalcMode(mode)
+    localStorage.setItem(CALC_MODE_KEY, mode)
+  }
 
   const handleStandardHoursChange = (val: number) => {
     setUserStandardHours(val)
@@ -86,6 +110,7 @@ export default function Dashboard({ provider, onLogout }: Props) {
   }
 
   const load = useCallback(async (m: string, background = false) => {
+    const seq = ++loadSeqRef.current
     if (background) {
       setRefreshing(true)
     } else {
@@ -93,13 +118,19 @@ export default function Dashboard({ provider, onLogout }: Props) {
     }
     setError('')
     try {
-      const res = await provider.getMonth(m)
-      setData(res)
+      const res = await provider.getMonth(m, calcModeRef.current)
+      if (seq === loadSeqRef.current) {
+        setData(res)
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载失败')
+      if (seq === loadSeqRef.current) {
+        setError(err instanceof Error ? err.message : '加载失败')
+      }
     } finally {
-      setRefreshing(false)
-      setLoading(false)
+      if (seq === loadSeqRef.current) {
+        setRefreshing(false)
+        setLoading(false)
+      }
     }
   }, [provider])
 
@@ -121,30 +152,69 @@ export default function Dashboard({ provider, onLogout }: Props) {
     }
   }
 
-  const todayStat = useMemo(() => {
-    if (!data) return undefined
-    const today = data.days.find((d) => d.isToday)
-    if (!today || !today.signIn) return today
+  const effectiveData = useMemo<MonthResponse | null>(() => {
+    if (!data) return null
 
-    // 基于用户设置的达标线动态重算平均工时达标签退时间
+    // 按当前 calcMode 即时重算每日工时，切换模式不重新请求 OA。
+    const daysWithHours = data.days.map((d) => {
+      if (!d.leave && d.signIn !== '' && d.signOut !== '') {
+        return {
+          ...d,
+          hours: effectiveHours(d.signIn, d.signOut, calcMode),
+        }
+      }
+      return d
+    })
+
     let sumHours = 0
     let doneCount = 0
-    for (const d of data.days) {
+    const records: DayRecord[] = []
+    for (const d of daysWithHours) {
       if (d.date !== data.today && (d.leave || d.signOut !== '')) {
         sumHours += d.hours
         doneCount++
+        records.push({
+          date: d.date,
+          signIn: d.signIn,
+          signOut: d.signOut,
+          hours: d.hours,
+          leave: d.leave,
+        })
       }
     }
-    const dynamicAvgSignOut = avgTargetSignOut(today.signIn, sumHours, doneCount, userStandardHours)
+    const avg = averageHours(records)
+
+    const finalDays = daysWithHours.map((d) => {
+      if (d.isToday && d.found && d.signIn !== '') {
+        return {
+          ...d,
+          nineSignOut: targetSignOutFor(d.signIn, NINE_HOURS, calcMode) || undefined,
+          targetSignOut: targetSignOut(d.signIn, calcMode) || undefined,
+          recommendSignOut: targetSignOutFor(d.signIn, EIGHT_HOURS, calcMode) || undefined,
+          avgSignOut:
+            avgTargetSignOut(d.signIn, sumHours, doneCount, userStandardHours, calcMode) || undefined,
+        }
+      }
+      return d
+    })
+
     return {
-      ...today,
-      avgSignOut: dynamicAvgSignOut || undefined,
+      ...data,
+      mode: calcMode,
+      averageHours: avg,
+      totalHours: sumHours,
+      days: finalDays,
     }
-  }, [data, userStandardHours])
+  }, [data, calcMode, userStandardHours])
+
+  const todayStat = useMemo(
+    () => effectiveData?.days.find((d) => d.isToday),
+    [effectiveData],
+  )
 
   const completedDays = useMemo(
-    () => data?.days.filter((d) => d.found && d.signOut !== '') ?? [],
-    [data],
+    () => effectiveData?.days.filter((d) => d.found && d.signOut !== '') ?? [],
+    [effectiveData],
   )
   const metDays = useMemo(
     () => completedDays.filter((d) => d.hours >= userStandardHours),
@@ -156,17 +226,25 @@ export default function Dashboard({ provider, onLogout }: Props) {
       setCalcHours(null)
       return
     }
-    provider.calcHours(todayStat.signIn, calcSignOut)
-      .then((res) => setCalcHours(res.hours))
-      .catch(() => setCalcHours(null))
-  }, [calcSignOut, todayStat?.signIn, provider])
+    let cancelled = false
+    provider.calcHours(todayStat.signIn, calcSignOut, calcMode)
+      .then((res) => {
+        if (!cancelled) setCalcHours(res.hours)
+      })
+      .catch(() => {
+        if (!cancelled) setCalcHours(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [calcSignOut, todayStat?.signIn, calcMode, provider])
 
   const calcMonthAvg = useMemo(() => {
-    if (calcHours == null || !data) return null
+    if (calcHours == null || !effectiveData) return null
     let sumHours = 0
     let doneCount = 0
-    for (const d of data.days) {
-      if (d.date !== data.today && (d.leave || d.signOut !== '')) {
+    for (const d of effectiveData.days) {
+      if (d.date !== effectiveData.today && (d.leave || d.signOut !== '')) {
         sumHours += d.hours
         doneCount++
       }
@@ -174,7 +252,7 @@ export default function Dashboard({ provider, onLogout }: Props) {
     const newTotal = sumHours + calcHours
     const newCount = doneCount + 1
     return newCount > 0 ? newTotal / newCount : 0
-  }, [calcHours, data])
+  }, [calcHours, effectiveData])
 
   const targetValue =
     targetOption === 'nine'
@@ -201,21 +279,16 @@ export default function Dashboard({ provider, onLogout }: Props) {
     <div className="flex min-h-screen flex-col bg-zinc-950">
       <div className="mx-auto w-full max-w-4xl flex-1 px-4 py-6">
         {/* 头部 */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold">工时统计</h1>
-            {data && (
-              <p className="mt-1 text-sm text-default-500">
-                {data.name} · {data.department}
-              </p>
-            )}
-          </div>
-          <Button size="sm" color="danger" variant="solid" onClick={logout}>
-            退出登录
-          </Button>
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold">工时统计</h1>
+          {effectiveData && (
+            <p className="mt-1 text-sm text-default-500">
+              {effectiveData.name} · {effectiveData.department}
+            </p>
+          )}
         </div>
 
-        {/* 月份导航与达标线设置 */}
+        {/* 月份导航 */}
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
             <Select
@@ -256,23 +329,16 @@ export default function Dashboard({ provider, onLogout }: Props) {
               刷新
             </Button>
           </div>
-
-          {/* 达标线选择 */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-default-500">工时达标线</span>
-            <div className="flex gap-1">
-              {[8.0, 8.5, 9.0].map((hours) => (
-                <Button
-                  key={hours}
-                  size="sm"
-                  color={userStandardHours === hours ? 'primary' : 'default'}
-                  variant={userStandardHours === hours ? 'solid' : 'flat'}
-                  onPress={() => handleStandardHoursChange(hours)}
-                >
-                  {hours === 8 ? '8h' : hours === 9 ? '9h' : `${hours}h`}
-                </Button>
-              ))}
-            </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <GlobalSettings
+              calcMode={calcMode}
+              onCalcModeChange={handleCalcModeChange}
+              standardHours={userStandardHours}
+              onStandardHoursChange={handleStandardHoursChange}
+            />
+            <Button size="sm" color="danger" variant="solid" onClick={logout}>
+              退出登录
+            </Button>
           </div>
         </div>
 
@@ -282,13 +348,13 @@ export default function Dashboard({ provider, onLogout }: Props) {
           </div>
         )}
 
-        {error && !data && (
+        {error && !effectiveData && (
           <Card className="mt-6">
             <CardBody className="text-danger">{error}</CardBody>
           </Card>
         )}
 
-        {!loading && data && (
+        {!loading && effectiveData && (
           <>
             {/* 刷新/加载失败提示（已有数据时保留旧数据） */}
             {error && (
@@ -306,14 +372,14 @@ export default function Dashboard({ provider, onLogout }: Props) {
             <div className="mt-6 flex flex-wrap gap-4">
               <SummaryCard
                 title="月平均工时"
-                value={data.averageHours > 0 ? formatHours(data.averageHours) : '—'}
+                value={effectiveData.averageHours > 0 ? formatHours(effectiveData.averageHours) : '—'}
                 subtitle={`达标线 ${userStandardHours}h`}
-                color={data.averageHours >= userStandardHours ? 'success' : 'warning'}
+                color={effectiveData.averageHours >= userStandardHours ? 'success' : 'warning'}
                 tip={<div>月平均 =（打卡天工时 + 请假天×8h）÷（打卡天数 + 请假天数），不含今天</div>}
               />
               <SummaryCard
                 title="本月总工时"
-                value={formatHours(data.totalHours)}
+                value={formatHours(effectiveData.totalHours)}
                 subtitle="不含今天"
                 color="primary"
                 tip={<div>已完成打卡天 + 请假天（8h）的工时总和，不含今天</div>}
@@ -326,15 +392,15 @@ export default function Dashboard({ provider, onLogout }: Props) {
               />
               <SummaryCard
                 title="请假天数"
-                value={String(data.leaveDays)}
+                value={String(effectiveData.leaveDays)}
                 subtitle="请假/外出按 8h 计"
-                color={data.leaveDays > 0 ? 'primary' : 'default'}
+                color={effectiveData.leaveDays > 0 ? 'primary' : 'default'}
               />
               <SummaryCard
                 title="迟到天数"
-                value={String(data.lateDays)}
+                value={String(effectiveData.lateDays)}
                 subtitle="签到晚于 9:00"
-                color={data.lateDays > 0 ? 'danger' : 'success'}
+                color={effectiveData.lateDays > 0 ? 'danger' : 'success'}
               />
             </div>
 
@@ -413,7 +479,9 @@ export default function Dashboard({ provider, onLogout }: Props) {
                         <div>
                           输入下班时间，根据当天签到时间计算当日有效工时。
                           <br />
-                          扣除规则与每日工时一致（午休 1.5h，9 点后签到且 18 点后签退另扣晚饭 0.5h）。
+                          {calcMode === 'B'
+                            ? '当前为模式 B：扣除规则与每日工时一致（无论是否 9 点后签到，均只扣午休 1.5h，不扣晚饭 0.5h）。'
+                            : '当前为模式 A：扣除规则与每日工时一致（午休 1.5h，9 点后签到且 18 点后签退另扣晚饭 0.5h）。'}
                         </div>
                       }
                     />
@@ -458,17 +526,30 @@ export default function Dashboard({ provider, onLogout }: Props) {
                   每日有效工时
                   <HelpTip
                     content={
-                      <div>
-                        签到时间按实际起算；午休固定扣 1.5h。
-                        <br />
-                        9 点后签到且 18 点后签退，另扣晚饭 0.5h。
-                        <br />
-                        请假/外出天按 8h 计。
-                      </div>
+                      calcMode === 'B' ? (
+                        <div>
+                          当前为模式 B：签到时间按实际起算；无论是否 9 点后签到，均只扣午休 1.5h，不扣晚饭 0.5h。
+                          <br />
+                          请假/外出天按 8h 计。
+                        </div>
+                      ) : (
+                        <div>
+                          当前为模式 A：签到时间按实际起算；午休固定扣 1.5h。
+                          <br />
+                          9 点后签到且 18 点后签退，另扣晚饭 0.5h。
+                          <br />
+                          请假/外出天按 8h 计。
+                        </div>
+                      )
                     }
                   />
                 </p>
-                <HoursChart days={data.days} standardHours={userStandardHours} month={data.month} today={data.today} />
+                <HoursChart
+                  days={effectiveData.days}
+                  standardHours={userStandardHours}
+                  month={effectiveData.month}
+                  today={effectiveData.today}
+                />
               </CardBody>
             </Card>
 
@@ -476,9 +557,9 @@ export default function Dashboard({ provider, onLogout }: Props) {
             <Card className="mt-4">
               <CardBody>
                 <p className="text-sm font-medium text-default-500">
-                  每日明细（平均 {data.averageHours > 0 ? hoursToHm(data.averageHours) : '—'}）
+                  每日明细（平均 {effectiveData.averageHours > 0 ? hoursToHm(effectiveData.averageHours) : '—'}）
                 </p>
-                <DayTable days={data.days} standardHours={userStandardHours} />
+                <DayTable days={effectiveData.days} standardHours={userStandardHours} />
               </CardBody>
             </Card>
 

@@ -1,18 +1,52 @@
 // Package calc 实现工时计算规则（纯函数，无外部依赖，便于单元测试）。
 //
-// 规则（与用户确认）：
-//   - 签到时间 in <= 9:00：计薪起点 S = in，扣午休 1.5h（早于 8:30 也按实际签到计入工时）
-//   - in > 9:00：S = in，扣午休 1.5h，且仅当签退时间 out > 18:00 时额外扣晚饭 0.5h
+// 模式：
+//   - ModeA（默认）：in <= 9:00 扣午休 1.5h；in > 9:00 扣午休 1.5h，且 out > 18:00 时额外扣晚饭 0.5h
+//   - ModeB：无论是否 9 点后签到，都只扣午休 1.5h，不扣晚饭 0.5h
 //
 // 达标工时 = 8.5h，用于计算当天目标签退时间。
 package calc
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// CalcMode 表示工时计算规则模式。
+type CalcMode string
+
+const (
+	// ModeA 默认规则：in > 9:00 且 out > 18:00 额外扣晚饭 0.5h；计算目标签退时 in > 9:00 扣 1.5h + 0.5h。
+	ModeA CalcMode = "A"
+
+	// ModeB 新规则：无论是否 9 点后签到，都只扣午休 1.5h，不扣晚饭 0.5h。
+	ModeB CalcMode = "B"
+)
+
+// ParseCalcMode 解析计算模式字符串（trim 后 "" / "A" / "a" -> ModeA，"B" / "b" -> ModeB）。
+func ParseCalcMode(s string) (CalcMode, error) {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "", string(ModeA):
+		return ModeA, nil
+	case string(ModeB):
+		return ModeB, nil
+	default:
+		return "", fmt.Errorf("无效的计算模式 %q（仅支持 A 或 B）", s)
+	}
+}
+
+func normalizeCalcMode(mode CalcMode) (CalcMode, error) {
+	if mode == "" {
+		return ModeA, nil
+	}
+	if mode != ModeA && mode != ModeB {
+		return "", fmt.Errorf("未知的计算模式 %q", mode)
+	}
+	return mode, nil
+}
 
 const (
 	// StandardHours 达标工时（小时）。
@@ -74,13 +108,28 @@ func FormatClock(seconds int) string {
 	return fmt.Sprintf("%02d:%02d", seconds/3600, (seconds%3600)/60)
 }
 
-// EffectiveHours 计算某天有效工时（小时，浮点，保留秒级精度）。
+// EffectiveHours 计算某天有效工时（小时，浮点，保留秒级精度，默认 ModeA）。
 //
 //	in  签到时间 "HH:MM[:SS]"
 //	out 签退时间 "HH:MM[:SS]"，为空表示尚未签退（返回 0）
 //
 // 返回 (有效工时小时数, error)。out 为空时不报错，返回 (0, nil)。
 func EffectiveHours(in, out string) (float64, error) {
+	return EffectiveHoursWithMode(in, out, ModeA)
+}
+
+// EffectiveHoursWithMode 按指定模式计算某天有效工时（小时，浮点，保留秒级精度）。
+//
+//	in   签到时间 "HH:MM[:SS]"
+//	out  签退时间 "HH:MM[:SS]"，为空表示尚未签退（返回 0）
+//	mode 计算模式（"" 规范化为 ModeA）
+//
+// 返回 (有效工时小时数, error)。out 为空时不报错，返回 (0, nil)。
+func EffectiveHoursWithMode(in, out string, mode CalcMode) (float64, error) {
+	m, err := normalizeCalcMode(mode)
+	if err != nil {
+		return 0, err
+	}
 	inSec, err := ParseClock(in)
 	if err != nil {
 		return 0, fmt.Errorf("签到时间: %w", err)
@@ -104,8 +153,8 @@ func EffectiveHours(in, out string) (float64, error) {
 
 	// 扣除午休（固定 1.5h）。
 	deduct := lunchBreakSec
-	// 9 点后签到 且 18 点后签退，额外扣晚饭 0.5h。
-	if inSec > lateThresholdSec && outSec > dinnerThreshold {
+	// ModeA 下：9 点后签到 且 18 点后签退，额外扣晚饭 0.5h。
+	if m == ModeA && inSec > lateThresholdSec && outSec > dinnerThreshold {
 		deduct += dinnerBreakSec
 	}
 
@@ -116,28 +165,37 @@ func EffectiveHours(in, out string) (float64, error) {
 	return float64(effective) / 3600.0, nil
 }
 
-// TargetSignOut 计算当天目标签退时间，使有效工时达到 StandardHours（8.5h）。
+// TargetSignOut 计算当天目标签退时间，使有效工时达到 StandardHours（8.5h，默认 ModeA）。
 func TargetSignOut(in string) (string, error) {
 	return TargetSignOutFor(in, StandardHours)
 }
 
-// TargetSignOutFor 计算当天目标签退时间，使有效工时达到指定 targetHours。
-//
-// 规则（与 EffectiveHours 一致，扣除项只取决于签到时间）：
-//   - in <= 9:00 → in 起步，扣午休 1.5h
-//   - in > 9:00 → in 起步，扣午休 1.5h + 晚饭 0.5h（此时目标签退必然 > 18:00）
+// TargetSignOutFor 计算当天目标签退时间，使有效工时达到指定 targetHours（默认 ModeA）。
 func TargetSignOutFor(in string, targetHours float64) (string, error) {
+	return TargetSignOutForWithMode(in, targetHours, ModeA)
+}
+
+// TargetSignOutForWithMode 按指定模式计算当天目标签退时间，使有效工时达到指定 targetHours。
+//
+// 规则（与 EffectiveHoursWithMode 一致，扣除项只取决于签到时间与模式）：
+//   - ModeA：in <= 9:00 → in 起步，扣午休 1.5h；in > 9:00 → in 起步，扣午休 1.5h + 晚饭 0.5h
+//   - ModeB：无论何时签到，只扣午休 1.5h
+func TargetSignOutForWithMode(in string, targetHours float64, mode CalcMode) (string, error) {
+	m, err := normalizeCalcMode(mode)
+	if err != nil {
+		return "", err
+	}
 	inSec, err := ParseClock(in)
 	if err != nil {
 		return "", fmt.Errorf("签到时间: %w", err)
 	}
 
 	start := inSec
-	targetEffective := int(targetHours * 3600)
+	targetEffective := int(math.Round(targetHours * 3600))
 
-	// 扣晚饭仅当 9 点后签到（此时目标签退必然 > 18:00）。
+	// 扣晚饭仅在 ModeA 且 9 点后签到时触发（此时目标签退必然 > 18:00）。
 	dinner := 0
-	if inSec > lateThresholdSec {
+	if m == ModeA && inSec > lateThresholdSec {
 		dinner = dinnerBreakSec
 	}
 
@@ -148,7 +206,12 @@ func TargetSignOutFor(in string, targetHours float64) (string, error) {
 	return FormatClock(outSec), nil
 }
 
-// AvgTargetSignOut 计算使月平均工时达到 target 的最早签退时间。
+// AvgTargetSignOut 计算使月平均工时达到 target 的最早签退时间（默认 ModeA）。
+func AvgTargetSignOut(in string, sumHours float64, doneDays int, target float64) (string, error) {
+	return AvgTargetSignOutWithMode(in, sumHours, doneDays, target, ModeA)
+}
+
+// AvgTargetSignOutWithMode 按指定模式计算使月平均工时达到 target 的最早签退时间。
 //
 //	sumHours 当月已完成天（不含今天）的有效工时总和；
 //	doneDays 当月已完成天数（不含今天）。
@@ -156,29 +219,13 @@ func TargetSignOutFor(in string, targetHours float64) (string, error) {
 // 今日需工时 need = target*(doneDays+1) - sumHours，且不得低于 8h：
 //   - need 不足 8h 时按 8h 计（当日工时不得低于 8h）；
 //   - 计算出的签退时间若早于 18:00（如极端异常），受 18:00 早退下限保护。
-func AvgTargetSignOut(in string, sumHours float64, doneDays int, target float64) (string, error) {
+func AvgTargetSignOutWithMode(in string, sumHours float64, doneDays int, target float64, mode CalcMode) (string, error) {
 	need := target*float64(doneDays+1) - sumHours
 	// 当日工时不得低于 8h。
 	if need < EightHours {
 		need = EightHours
 	}
-	inSec, err := ParseClock(in)
-	if err != nil {
-		return "", fmt.Errorf("签到时间: %w", err)
-	}
-
-	targetEffective := int(need * 3600)
-	dinner := 0
-	if inSec > lateThresholdSec {
-		dinner = dinnerBreakSec
-	}
-	outSec := inSec + targetEffective + lunchBreakSec + dinner
-
-	// 如果小于 18:00 则受早退下限限制
-	if outSec < earliestSignOutSec {
-		return FormatClock(earliestSignOutSec), nil
-	}
-	return FormatClock(outSec), nil
+	return TargetSignOutForWithMode(in, need, mode)
 }
 
 // IsLate 判断是否迟到：签到时间晚于 9:00:59（即 9:01:00 及以后）算迟到。

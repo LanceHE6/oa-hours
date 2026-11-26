@@ -7,14 +7,14 @@ import { Capacitor } from '@capacitor/core'
 import type { AuthResponse, BuildInfo, MonthResponse } from './api'
 import { apiGet, apiPost } from './api'
 import { buildDirectSource, OaClient } from './oa/client'
-import { effectiveHours } from './oa/calc'
+import { effectiveHours, type CalcMode } from './oa/calc'
 
 export interface DataProvider {
   login(account: string, password: string): Promise<void>
   logout(): Promise<void>
   isLoggedIn(): Promise<boolean>
-  getMonth(month: string): Promise<MonthResponse>
-  calcHours(signIn: string, signOut: string): Promise<{ hours: number }>
+  getMonth(month: string, mode?: CalcMode): Promise<MonthResponse>
+  calcHours(signIn: string, signOut: string, mode?: CalcMode): Promise<{ hours: number }>
   getBuildInfo(): Promise<BuildInfo>
 }
 
@@ -32,12 +32,14 @@ export class WebProvider implements DataProvider {
     return (await apiGet<AuthResponse>('/api/auth')).loggedIn
   }
 
-  async getMonth(month: string): Promise<MonthResponse> {
-    return apiGet<MonthResponse>(`/api/month?month=${month}`)
+  async getMonth(month: string, mode?: CalcMode): Promise<MonthResponse> {
+    const modeQuery = mode ? `&mode=${encodeURIComponent(mode)}` : ''
+    return apiGet<MonthResponse>(`/api/month?month=${month}${modeQuery}`)
   }
 
-  async calcHours(signIn: string, signOut: string): Promise<{ hours: number }> {
-    return apiGet<{ hours: number }>(`/api/calc?signIn=${encodeURIComponent(signIn)}&signOut=${encodeURIComponent(signOut)}`)
+  async calcHours(signIn: string, signOut: string, mode?: CalcMode): Promise<{ hours: number }> {
+    const modeQuery = mode ? `&mode=${encodeURIComponent(mode)}` : ''
+    return apiGet<{ hours: number }>(`/api/calc?signIn=${encodeURIComponent(signIn)}&signOut=${encodeURIComponent(signOut)}${modeQuery}`)
   }
 
   async getBuildInfo(): Promise<BuildInfo> {
@@ -67,12 +69,12 @@ export class DirectProvider implements DataProvider {
     return this.client.isLoggedIn()
   }
 
-  async getMonth(month: string): Promise<MonthResponse> {
-    return this.client.fetchMonth(month)
+  async getMonth(month: string, mode?: CalcMode): Promise<MonthResponse> {
+    return this.client.fetchMonth(month, mode)
   }
 
-  async calcHours(signIn: string, signOut: string): Promise<{ hours: number }> {
-    return { hours: effectiveHours(signIn, signOut) }
+  async calcHours(signIn: string, signOut: string, mode?: CalcMode): Promise<{ hours: number }> {
+    return { hours: effectiveHours(signIn, signOut, mode) }
   }
 
   async getBuildInfo(): Promise<BuildInfo> {

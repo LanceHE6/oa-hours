@@ -218,14 +218,15 @@ func isLoginRedirect(body []byte) bool {
 
 // MonthStats 是某月的工时统计结果。
 type MonthStats struct {
-	Month         string    `json:"month"`
-	Name          string    `json:"name"`
-	Department    string    `json:"department"`
-	StandardHours float64   `json:"standardHours"`
-	Days          []DayStat `json:"days"`
-	AverageHours  float64   `json:"averageHours"`
-	LateDays      int       `json:"lateDays"`  // 迟到天数（签到晚于 9:00）
-	LeaveDays     int       `json:"leaveDays"` // 请假/外出天数
+	Month         string        `json:"month"`
+	Mode          calc.CalcMode `json:"mode"`
+	Name          string        `json:"name"`
+	Department    string        `json:"department"`
+	StandardHours float64       `json:"standardHours"`
+	Days          []DayStat     `json:"days"`
+	AverageHours  float64       `json:"averageHours"`
+	LateDays      int           `json:"lateDays"`  // 迟到天数（签到晚于 9:00）
+	LeaveDays     int           `json:"leaveDays"` // 请假/外出天数
 }
 
 // DayStat 是一天的统计结果。
@@ -243,8 +244,20 @@ type DayStat struct {
 
 var weekdayCN = [...]string{"周日", "周一", "周二", "周三", "周四", "周五", "周六"}
 
-// FetchMonth 拉取某月（YYYY-MM）每天的考勤明细并计算工时（并行拉取）。
+// FetchMonth 拉取某月（YYYY-MM）每天的考勤明细并计算工时（默认 ModeA，并行拉取）。
 func (c *Client) FetchMonth(month string) (*MonthStats, error) {
+	return c.FetchMonthWithMode(month, calc.ModeA)
+}
+
+// FetchMonthWithMode 拉取某月（YYYY-MM）每天的考勤明细并按指定模式计算工时（并行拉取）。
+func (c *Client) FetchMonthWithMode(month string, mode calc.CalcMode) (*MonthStats, error) {
+	if mode == "" {
+		mode = calc.ModeA
+	}
+	if mode != calc.ModeA && mode != calc.ModeB {
+		return nil, fmt.Errorf("未知的计算模式 %q", mode)
+	}
+
 	t, err := time.Parse("2006-01", month)
 	if err != nil {
 		return nil, fmt.Errorf("月份格式错误 %q: %w", month, err)
@@ -253,6 +266,7 @@ func (c *Client) FetchMonth(month string) (*MonthStats, error) {
 
 	stats := &MonthStats{
 		Month:         month,
+		Mode:          mode,
 		StandardHours: calc.StandardHours,
 		Days:          make([]DayStat, days),
 	}
@@ -308,7 +322,7 @@ func (c *Client) FetchMonth(month string) (*MonthStats, error) {
 			} else {
 				ds.SignIn = r.detail.SignIn
 				ds.SignOut = r.detail.SignOut
-				ds.Hours, _ = calc.EffectiveHours(r.detail.SignIn, r.detail.SignOut)
+				ds.Hours, _ = calc.EffectiveHoursWithMode(r.detail.SignIn, r.detail.SignOut, mode)
 				ds.Late = calc.IsLate(r.detail.SignIn)
 			}
 			if stats.Name == "" {

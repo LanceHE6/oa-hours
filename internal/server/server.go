@@ -288,18 +288,23 @@ func (s *Server) handleBuildInfo(w http.ResponseWriter, r *http.Request) {
 
 // handleCalc 根据签到/签退时间计算当日有效工时（纯计算，无需登录）。
 func (s *Server) handleCalc(w http.ResponseWriter, r *http.Request) {
+	mode, err := calc.ParseCalcMode(r.URL.Query().Get("mode"))
+	if err != nil {
+		sendError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	signIn := r.URL.Query().Get("signIn")
 	signOut := r.URL.Query().Get("signOut")
 	if signIn == "" || signOut == "" {
 		sendError(w, http.StatusBadRequest, "signIn 和 signOut 参数不能为空")
 		return
 	}
-	hours, err := calc.EffectiveHours(signIn, signOut)
+	hours, err := calc.EffectiveHoursWithMode(signIn, signOut, mode)
 	if err != nil {
 		sendError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	sendJSON(w, http.StatusOK, map[string]any{"hours": hours})
+	sendJSON(w, http.StatusOK, map[string]any{"hours": hours, "mode": mode})
 }
 
 func (s *Server) handleMonth(w http.ResponseWriter, r *http.Request) {
@@ -308,12 +313,17 @@ func (s *Server) handleMonth(w http.ResponseWriter, r *http.Request) {
 		sendError(w, http.StatusUnauthorized, "未登录")
 		return
 	}
+	mode, err := calc.ParseCalcMode(r.URL.Query().Get("mode"))
+	if err != nil {
+		sendError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	month := r.URL.Query().Get("month")
 	if month == "" {
 		month = time.Now().Format("2006-01")
 	}
 
-	stats, err := sess.client.FetchMonth(month)
+	stats, err := sess.client.FetchMonthWithMode(month, mode)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -348,16 +358,16 @@ func (s *Server) handleMonth(w http.ResponseWriter, r *http.Request) {
 		}
 		// 当天：只要已签到，就计算各种目标工时的签退时间（9h / 8.5h / 8h / 平均工时）。
 		if dr.IsToday && d.Found && d.SignIn != "" {
-			if nine, err := calc.TargetSignOutFor(d.SignIn, calc.NineHours); err == nil {
+			if nine, err := calc.TargetSignOutForWithMode(d.SignIn, calc.NineHours, mode); err == nil {
 				dr.NineSignOut = nine
 			}
-			if target, err := calc.TargetSignOut(d.SignIn); err == nil {
+			if target, err := calc.TargetSignOutForWithMode(d.SignIn, calc.StandardHours, mode); err == nil {
 				dr.TargetSignOut = target
 			}
-			if rec, err := calc.TargetSignOutFor(d.SignIn, calc.EightHours); err == nil {
+			if rec, err := calc.TargetSignOutForWithMode(d.SignIn, calc.EightHours, mode); err == nil {
 				dr.RecommendSignOut = rec
 			}
-			if avg, err := calc.AvgTargetSignOut(d.SignIn, sumHours, doneCount, calc.StandardHours); err == nil {
+			if avg, err := calc.AvgTargetSignOutWithMode(d.SignIn, sumHours, doneCount, calc.StandardHours, mode); err == nil {
 				dr.AvgSignOut = avg
 			}
 		}
@@ -366,6 +376,7 @@ func (s *Server) handleMonth(w http.ResponseWriter, r *http.Request) {
 
 	sendJSON(w, http.StatusOK, monthResponse{
 		Month:         stats.Month,
+		Mode:          stats.Mode,
 		Name:          stats.Name,
 		Department:    stats.Department,
 		StandardHours: stats.StandardHours,
@@ -380,6 +391,7 @@ func (s *Server) handleMonth(w http.ResponseWriter, r *http.Request) {
 
 type monthResponse struct {
 	Month         string        `json:"month"`
+	Mode          calc.CalcMode `json:"mode"`
 	Name          string        `json:"name"`
 	Department    string        `json:"department"`
 	StandardHours float64       `json:"standardHours"`
